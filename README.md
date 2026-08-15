@@ -47,3 +47,8 @@ Notes:
   init failure — but push notifications won't work until `flutterfire configure`
   has been run for a real Firebase project.
 - State management is Riverpod; see `lib/core/state/`.
+- Uses `share_plus` (Invite screen's Share button) via the classic `Share.share()`
+  static API — this API surface was written from memory without the SDK to
+  verify against; if `flutter analyze` flags it, it's a one-line fix (see
+  `share_plus`'s current API docs for the exact call shape on whatever version
+  `pub get` resolves).

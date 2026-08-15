@@ -4,12 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_exception.dart';
 import '../../../core/models/household.dart';
 import '../../../core/models/schedule.dart';
+import '../../../core/models/turn.dart';
 import '../../../core/state/auth_state.dart';
 import '../../../core/state/home_state.dart';
 import '../../../core/state/household_state.dart';
 import '../../../core/state/providers.dart';
 import '../../../core/utils/schedule_utils.dart';
 import '../../../shared/widgets/async_view.dart';
+import '../../../shared/widgets/member_avatar.dart';
+import '../../../shared/widgets/profile_avatar_action.dart';
+import '../../../shared/widgets/section_header.dart';
 
 const _dayNames = {
   0: 'Sunday',
@@ -37,11 +41,12 @@ class ScheduleScreen extends ConsumerWidget {
     final currentUserId = authState is AuthAuthenticated ? authState.user.id : null;
     // "Today" must come from the backend (household-timezone-aware), never the
     // device clock — the schedule can't be highlighted correctly otherwise.
-    final todayDateString = ref.watch(homeProvider).value?.turn.date;
+    final todayTurn = ref.watch(homeProvider).value?.turn;
+    final todayDateString = todayTurn?.date;
     final todayDayOfWeek = todayDateString != null ? dayOfWeekFromDateString(todayDateString) : null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Schedule')),
+      appBar: AppBar(title: const Text('Schedule'), actions: const [ProfileAvatarAction()]),
       body: AsyncView(
         value: scheduleAsync,
         onRetry: () => ref.invalidate(scheduleProvider),
@@ -55,10 +60,12 @@ class ScheduleScreen extends ConsumerWidget {
             onRefresh: () async => ref.invalidate(scheduleProvider),
             child: ListView.separated(
               padding: const EdgeInsets.all(20),
-              itemCount: _displayOrder.length,
+              itemCount: _displayOrder.length + 1,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (context, index) {
-                final dayOfWeek = _displayOrder[index];
+                if (index == 0) return const SectionHeader(title: 'This week');
+
+                final dayOfWeek = _displayOrder[index - 1];
                 final entry = schedule.forDay(dayOfWeek);
                 final isToday = todayDayOfWeek != null && dayOfWeek == todayDayOfWeek;
                 final matchingMembers = members.where((m) => m.id == entry.userId);
@@ -71,6 +78,7 @@ class ScheduleScreen extends ConsumerWidget {
                       ? '${entry.startTime} – ${entry.endTime}'
                       : null,
                   isToday: isToday,
+                  statusLabel: isToday && todayTurn != null ? _statusLabelFor(todayTurn.status) : null,
                   onTap: isOwner
                       ? () => _editDay(context, ref, schedule, entry, members)
                       : null,
@@ -134,6 +142,15 @@ class ScheduleScreen extends ConsumerWidget {
       );
     }
   }
+
+  String? _statusLabelFor(TurnStatus status) => switch (status) {
+        TurnStatus.pending => null,
+        TurnStatus.released => 'Released',
+        TurnStatus.claimed => 'Claimed',
+        TurnStatus.inUse => 'In use',
+        TurnStatus.completed => 'Completed',
+        TurnStatus.expired => null,
+      };
 }
 
 class _DayTile extends StatelessWidget {
@@ -141,6 +158,7 @@ class _DayTile extends StatelessWidget {
   final String memberName;
   final String? timeRange;
   final bool isToday;
+  final String? statusLabel;
   final VoidCallback? onTap;
 
   const _DayTile({
@@ -148,6 +166,7 @@ class _DayTile extends StatelessWidget {
     required this.memberName,
     required this.timeRange,
     required this.isToday,
+    this.statusLabel,
     required this.onTap,
   });
 
@@ -164,7 +183,7 @@ class _DayTile extends StatelessWidget {
           child: Row(
             children: [
               SizedBox(
-                width: 96,
+                width: 88,
                 child: Text(
                   dayLabel,
                   style: theme.textTheme.titleSmall?.copyWith(
@@ -172,6 +191,8 @@ class _DayTile extends StatelessWidget {
                   ),
                 ),
               ),
+              MemberAvatar(name: memberName, radius: 16),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -182,6 +203,14 @@ class _DayTile extends StatelessWidget {
                   ],
                 ),
               ),
+              if (statusLabel != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Text(
+                    statusLabel!,
+                    style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
               if (onTap != null) const Icon(Icons.chevron_right),
             ],
           ),

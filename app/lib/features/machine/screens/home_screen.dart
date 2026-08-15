@@ -10,7 +10,10 @@ import '../../../core/state/home_state.dart';
 import '../../../core/state/household_state.dart';
 import '../../../core/utils/schedule_utils.dart';
 import '../../../shared/widgets/async_view.dart';
-import '../../../shared/widgets/status_badge.dart';
+import '../../../shared/widgets/confirm_sheet.dart';
+import '../../../shared/widgets/member_avatar.dart';
+import '../../../shared/widgets/section_header.dart';
+import '../../profile/screens/profile_screen.dart';
 
 const _dayNames = {
   0: 'Sunday',
@@ -21,6 +24,8 @@ const _dayNames = {
   5: 'Friday',
   6: 'Saturday',
 };
+
+const _durationChoices = [30, 45, 60, 90];
 
 String _nameFor(String userId, List<HouseholdMemberProfile> members, String? currentUserId) {
   if (userId == currentUserId) return 'You';
@@ -38,38 +43,121 @@ class HomeScreen extends ConsumerWidget {
     final scheduleAsync = ref.watch(scheduleProvider);
     final authState = ref.watch(authStateProvider);
     final currentUserId = authState is AuthAuthenticated ? authState.user.id : null;
+    final currentUserName = authState is AuthAuthenticated ? authState.user.name : '';
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Home')),
-      body: RefreshIndicator(
-        onRefresh: () => ref.read(homeProvider.notifier).refresh(),
-        child: AsyncView(
-          value: homeState,
-          onRetry: () => ref.read(homeProvider.notifier).refresh(),
-          builder: (context, data) {
-            final members = membersAsync.value ?? const <HouseholdMemberProfile>[];
-            final schedule = scheduleAsync.value;
-            return ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                _StatusCard(turn: data.turn, members: members, currentUserId: currentUserId),
-                const SizedBox(height: 16),
-                _ActionCard(turn: data.turn, currentUserId: currentUserId),
-                if (schedule != null) ...[
-                  const SizedBox(height: 16),
-                  _UpcomingCard(
-                    schedule: schedule,
-                    todayDateString: data.turn.date,
-                    members: members,
-                    currentUserId: currentUserId,
-                  ),
-                ],
-              ],
-            );
-          },
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: () => ref.read(homeProvider.notifier).refresh(),
+          child: ListView(
+            children: [
+              _HomeHeader(name: currentUserName),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                child: AsyncView(
+                  value: homeState,
+                  onRetry: () => ref.read(homeProvider.notifier).refresh(),
+                  builder: (context, data) {
+                    final members = membersAsync.value ?? const <HouseholdMemberProfile>[];
+                    final schedule = scheduleAsync.value;
+                    final todayEntry = schedule != null
+                        ? schedule.forDay(dayOfWeekFromDateString(data.turn.date))
+                        : null;
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _StatusCard(turn: data.turn, members: members, currentUserId: currentUserId),
+                        const SizedBox(height: 20),
+                        const SectionHeader(title: "Today's turn"),
+                        _TodayTurnCard(
+                          turn: data.turn,
+                          scheduleDay: todayEntry,
+                          members: members,
+                          currentUserId: currentUserId,
+                        ),
+                        const SizedBox(height: 16),
+                        _ActionCard(turn: data.turn, currentUserId: currentUserId, members: members),
+                        if (schedule != null) ...[
+                          const SizedBox(height: 16),
+                          _UpcomingCard(
+                            schedule: schedule,
+                            todayDateString: data.turn.date,
+                            members: members,
+                            currentUserId: currentUserId,
+                          ),
+                        ],
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+}
+
+class _HomeHeader extends StatelessWidget {
+  final String name;
+  const _HomeHeader({required this.name});
+
+  String _greetingFor(int hour) {
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final now = DateTime.now();
+    final greeting = _greetingFor(now.hour);
+    final dateLabel = DateFormat('EEEE, MMMM d').format(now);
+    final firstName = name.trim().isEmpty ? '' : name.trim().split(' ').first;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 12, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  firstName.isEmpty ? greeting : '$greeting, $firstName 👋',
+                  style: theme.textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  dateLabel,
+                  style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            tooltip: 'Notification settings',
+            onPressed: () => _openProfile(context),
+          ),
+          InkWell(
+            borderRadius: BorderRadius.circular(24),
+            onTap: () => _openProfile(context),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: MemberAvatar(name: name),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openProfile(BuildContext context) {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProfileScreen()));
   }
 }
 
@@ -83,64 +171,67 @@ class _StatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheduledName = _nameFor(turn.scheduledUserId, members, currentUserId);
-    final isScheduledUserMe = currentUserId != null && turn.scheduledUserId == currentUserId;
     final isEmergency = turn.isEmergency;
 
-    final (label, color) = switch (turn.status) {
-      TurnStatus.pending => isScheduledUserMe
-          ? ('Your turn', theme.colorScheme.primary)
-          : ('Available', theme.colorScheme.primary),
-      TurnStatus.released => ('🚨 Released — up for grabs', Colors.orange),
-      TurnStatus.claimed => ('Claimed', Colors.orange),
+    final (emoji, label, color) = switch (turn.status) {
+      TurnStatus.pending => ('🧺', 'MACHINE AVAILABLE', theme.colorScheme.primary),
+      TurnStatus.released => ('🚨', 'TURN RELEASED', Colors.orange),
+      TurnStatus.claimed => ('🚨', 'EMERGENCY CLAIMED', Colors.orange),
       TurnStatus.inUse =>
-        isEmergency ? ('🚨 Emergency use', Colors.deepOrange) : ('Machine in use', Colors.redAccent),
-      TurnStatus.completed => ('✓ Turn completed', Colors.green),
-      TurnStatus.expired => ('Not used today', theme.colorScheme.onSurfaceVariant),
+        isEmergency ? ('🚨', 'EMERGENCY USE', Colors.deepOrange) : ('🧺', 'MACHINE IN USE', Colors.redAccent),
+      TurnStatus.completed => ('✓', 'COMPLETED', Colors.green),
+      TurnStatus.expired => ('🧺', 'NOT USED TODAY', theme.colorScheme.onSurfaceVariant),
     };
 
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text("Today's schedule", style: theme.textTheme.labelLarge),
-            const SizedBox(height: 6),
-            Text(scheduledName, style: theme.textTheme.headlineSmall),
-            const SizedBox(height: 16),
-            StatusBadge(label: label, color: color),
-            const SizedBox(height: 12),
-            Text(_statusDetail(turn, members, currentUserId, isScheduledUserMe), style: theme.textTheme.bodyMedium),
-          ],
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 250),
+          child: Column(
+            key: ValueKey('${turn.status}-$isEmergency'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(emoji, style: const TextStyle(fontSize: 32)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800, color: color),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                _statusDetail(turn, members, currentUserId),
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  String _statusDetail(
-    Turn turn,
-    List<HouseholdMemberProfile> members,
-    String? currentUserId,
-    bool isScheduledUserMe,
-  ) {
+  String _statusDetail(Turn turn, List<HouseholdMemberProfile> members, String? currentUserId) {
     switch (turn.status) {
       case TurnStatus.pending:
-        if (isScheduledUserMe) return "It's your turn — start whenever you're ready.";
-        final name = _nameFor(turn.scheduledUserId, members, currentUserId);
-        return "$name's scheduled day. Waiting for $name.";
+        return 'Available now.';
       case TurnStatus.released:
         final name = _nameFor(turn.scheduledUserId, members, currentUserId);
         return "$name doesn't need today's turn. Emergency use is available.";
       case TurnStatus.claimed:
-        return "${_nameFor(turn.actingUserId ?? '', members, currentUserId)} claimed this turn.";
+        return "${_nameFor(turn.actingUserId ?? '', members, currentUserId)} claimed this turn and is about to start.";
       case TurnStatus.inUse:
         final name = _nameFor(turn.actingUserId ?? '', members, currentUserId);
         return '$name is washing.${_timingDetail(turn)}';
       case TurnStatus.completed:
         return "Today's wash is finished. Machine available.";
       case TurnStatus.expired:
-        return "Nobody used the machine today.";
+        return 'Nobody used the machine today.';
     }
   }
 
@@ -160,17 +251,76 @@ class _StatusCard extends StatelessWidget {
   }
 }
 
+class _TodayTurnCard extends StatelessWidget {
+  final Turn turn;
+  final ScheduleDay? scheduleDay;
+  final List<HouseholdMemberProfile> members;
+  final String? currentUserId;
+
+  const _TodayTurnCard({
+    required this.turn,
+    required this.scheduleDay,
+    required this.members,
+    required this.currentUserId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheduledName = _nameFor(turn.scheduledUserId, members, currentUserId);
+    final isMe = currentUserId != null && turn.scheduledUserId == currentUserId;
+    final subtitle = isMe ? 'Your scheduled turn' : "$scheduledName's scheduled turn";
+    final timeSlot = (scheduleDay?.startTime != null && scheduleDay?.endTime != null)
+        ? '${scheduleDay!.startTime} – ${scheduleDay!.endTime}'
+        : null;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            MemberAvatar(name: scheduledName, radius: 24),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(scheduledName, style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                  if (timeSlot != null) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(Icons.schedule, size: 14, color: theme.colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 4),
+                        Text(timeSlot, style: theme.textTheme.bodySmall),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ActionCard extends ConsumerStatefulWidget {
   final Turn turn;
   final String? currentUserId;
+  final List<HouseholdMemberProfile> members;
 
-  const _ActionCard({required this.turn, required this.currentUserId});
+  const _ActionCard({required this.turn, required this.currentUserId, required this.members});
 
   @override
   ConsumerState<_ActionCard> createState() => _ActionCardState();
 }
-
-const _durationChoices = [30, 45, 60, 90];
 
 class _ActionCardState extends ConsumerState<_ActionCard> {
   bool _busy = false;
@@ -186,64 +336,52 @@ class _ActionCardState extends ConsumerState<_ActionCard> {
   }
 
   Future<void> _startWithDurationPrompt() async {
-    final minutes = await _pickDuration(context);
-    if (minutes == null) return; // user cancelled
+    final minutes = await _pickDuration(title: 'Start wash', confirmLabel: 'Start Washing');
+    if (minutes == null || !mounted) return;
     final notifier = ref.read(homeProvider.notifier);
     await _run(() => notifier.start(estimatedDurationMinutes: minutes));
   }
 
-  Future<int?> _pickDuration(BuildContext context) {
-    return showModalBottomSheet<int>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('How long do you expect to wash?', style: Theme.of(context).textTheme.titleMedium),
-            ),
-            for (final minutes in _durationChoices)
-              ListTile(
-                title: Text('$minutes minutes'),
-                onTap: () => Navigator.of(context).pop(minutes),
-              ),
-            ListTile(
-              title: const Text('Custom'),
-              onTap: () async {
-                final custom = await _promptCustomDuration(context);
-                if (context.mounted) Navigator.of(context).pop(custom);
-              },
-            ),
-          ],
-        ),
-      ),
+  Future<void> _releaseWithConfirmation() async {
+    final confirmed = await showConfirmSheet(
+      context,
+      title: "Release today's turn?",
+      message: "You don't need the washing machine today. Someone else will be able to use it for an "
+          "emergency.\n\nYour normal weekly schedule will not change.",
+      confirmLabel: 'Release Turn',
+      destructive: true,
     );
+    if (!confirmed || !mounted) return;
+    await _run(() => ref.read(homeProvider.notifier).release());
   }
 
-  Future<int?> _promptCustomDuration(BuildContext context) async {
-    final controller = TextEditingController();
-    return showDialog<int>(
+  Future<void> _claimWithDurationPrompt() async {
+    final minutes = await _pickDuration(title: 'Claim the machine', confirmLabel: 'Confirm');
+    if (minutes == null || !mounted) return;
+
+    setState(() => _busy = true);
+    final notifier = ref.read(homeProvider.notifier);
+    final claimError = await notifier.claim();
+    if (claimError != null) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(claimError)));
+      return;
+    }
+
+    final startError = await notifier.start(estimatedDurationMinutes: minutes);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (startError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(startError)));
+    }
+  }
+
+  Future<int?> _pickDuration({required String title, required String confirmLabel}) {
+    return showModalBottomSheet<int>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Custom duration'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          autofocus: true,
-          decoration: const InputDecoration(suffixText: 'minutes'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () {
-              final value = int.tryParse(controller.text);
-              Navigator.of(context).pop(value);
-            },
-            child: const Text('Start'),
-          ),
-        ],
-      ),
+      isScrollControlled: true,
+      builder: (context) => _DurationPickerSheet(title: title, confirmLabel: confirmLabel),
     );
   }
 
@@ -251,10 +389,10 @@ class _ActionCardState extends ConsumerState<_ActionCard> {
   Widget build(BuildContext context) {
     final turn = widget.turn;
     final userId = widget.currentUserId;
-    final notifier = ref.read(homeProvider.notifier);
 
     Widget? primaryAction;
     Widget? secondaryAction;
+    String? statusOnlyMessage;
 
     final isScheduledUser = userId != null && turn.scheduledUserId == userId;
     final isActingUser = userId != null && turn.actingUserId == userId;
@@ -263,48 +401,169 @@ class _ActionCardState extends ConsumerState<_ActionCard> {
       primaryAction = FilledButton.icon(
         onPressed: _busy ? null : _startWithDurationPrompt,
         icon: const Icon(Icons.play_arrow),
-        label: const Text('Start washing'),
+        label: const Text('Start Wash'),
       );
       secondaryAction = OutlinedButton.icon(
-        onPressed: _busy ? null : () => _run(() => notifier.release()),
+        onPressed: _busy ? null : _releaseWithConfirmation,
         icon: const Icon(Icons.free_cancellation_outlined),
-        label: const Text("Release today's turn"),
+        label: const Text('Release Turn'),
       );
+    } else if (turn.status == TurnStatus.pending && !isScheduledUser) {
+      final name = _nameFor(turn.scheduledUserId, widget.members, userId);
+      statusOnlyMessage = 'Waiting for $name.';
     } else if (turn.status == TurnStatus.released) {
       primaryAction = FilledButton.icon(
-        onPressed: _busy ? null : () => _run(() => notifier.claim()),
+        onPressed: _busy ? null : _claimWithDurationPrompt,
         icon: const Icon(Icons.bolt),
-        label: const Text('Claim for emergency use'),
+        label: const Text('Claim Machine'),
       );
     } else if (turn.status == TurnStatus.claimed && isActingUser) {
       primaryAction = FilledButton.icon(
         onPressed: _busy ? null : _startWithDurationPrompt,
         icon: const Icon(Icons.play_arrow),
-        label: const Text('Start washing'),
+        label: const Text('Start Washing'),
       );
     } else if (turn.status == TurnStatus.inUse && isActingUser) {
       primaryAction = FilledButton.icon(
-        onPressed: _busy ? null : () => _run(() => notifier.finish()),
+        onPressed: _busy ? null : () => _run(() => ref.read(homeProvider.notifier).finish()),
         icon: const Icon(Icons.check),
-        label: const Text('Finish washing'),
+        label: const Text("I'm Finished"),
       );
+    } else if (turn.status == TurnStatus.inUse && !isActingUser) {
+      statusOnlyMessage = "${_nameFor(turn.actingUserId ?? '', widget.members, userId)} is using the machine.";
+    } else if (turn.status == TurnStatus.completed) {
+      statusOnlyMessage = "✓ Today's turn completed";
     }
 
-    if (primaryAction == null && secondaryAction == null) {
+    if (primaryAction == null && secondaryAction == null && statusOnlyMessage == null) {
       return const SizedBox.shrink();
     }
 
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
+        child: statusOnlyMessage != null
+            ? Row(
+                children: [
+                  Icon(Icons.info_outline, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(statusOnlyMessage, style: Theme.of(context).textTheme.bodyMedium)),
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (primaryAction != null) primaryAction,
+                  if (secondaryAction != null) ...[
+                    const SizedBox(height: 10),
+                    secondaryAction,
+                  ],
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+/// Duration selection with a live "estimated finish" preview, matching chips
+/// (30/45/60/90) plus a custom entry — all in one sheet with an explicit
+/// confirm step, rather than closing immediately on tap.
+class _DurationPickerSheet extends StatefulWidget {
+  final String title;
+  final String confirmLabel;
+
+  const _DurationPickerSheet({required this.title, required this.confirmLabel});
+
+  @override
+  State<_DurationPickerSheet> createState() => _DurationPickerSheetState();
+}
+
+class _DurationPickerSheetState extends State<_DurationPickerSheet> {
+  int? _selected = 45;
+  bool _customSelected = false;
+  final _customController = TextEditingController();
+
+  @override
+  void dispose() {
+    _customController.dispose();
+    super.dispose();
+  }
+
+  int? get _minutes {
+    if (!_customSelected) return _selected;
+    return int.tryParse(_customController.text);
+  }
+
+  bool get _isValid {
+    final m = _minutes;
+    return m != null && m >= 1 && m <= 240;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final minutes = _minutes;
+    final estimatedFinish =
+        _isValid ? DateFormat.jm().format(DateTime.now().add(Duration(minutes: minutes!))) : null;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(24, 24, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+      child: SafeArea(
+        top: false,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (primaryAction != null) primaryAction,
-            if (secondaryAction != null) ...[
-              const SizedBox(height: 10),
-              secondaryAction,
+            Text(widget.title, style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text('How long do you expect it to take?', style: theme.textTheme.bodyMedium),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final m in _durationChoices)
+                  ChoiceChip(
+                    label: Text('$m min'),
+                    selected: !_customSelected && _selected == m,
+                    onSelected: (_) => setState(() {
+                      _customSelected = false;
+                      _selected = m;
+                    }),
+                  ),
+                ChoiceChip(
+                  label: const Text('Custom'),
+                  selected: _customSelected,
+                  onSelected: (_) => setState(() => _customSelected = true),
+                ),
+              ],
+            ),
+            if (_customSelected) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _customController,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Minutes', suffixText: 'min'),
+                onChanged: (_) => setState(() {}),
+              ),
             ],
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Icon(Icons.schedule, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Text(
+                  estimatedFinish != null ? 'Estimated finish: $estimatedFinish' : 'Choose a duration',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: _isValid ? () => Navigator.of(context).pop(minutes) : null,
+              child: Text(widget.confirmLabel),
+            ),
           ],
         ),
       ),

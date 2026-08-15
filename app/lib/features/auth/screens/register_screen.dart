@@ -49,6 +49,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Text('Create your account', style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 24),
                 TextFormField(
                   controller: _nameController,
                   decoration: const InputDecoration(labelText: 'Name'),
@@ -78,12 +80,15 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 FilledButton(
                   onPressed: isLoading ? null : _submit,
                   child: isLoading
-                      ? const SizedBox(
+                      ? SizedBox(
                           height: 20,
                           width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Theme.of(context).colorScheme.onPrimary,
+                          ),
                         )
-                      : const Text('Sign up'),
+                      : const Text('Create Account'),
                 ),
               ],
             ),

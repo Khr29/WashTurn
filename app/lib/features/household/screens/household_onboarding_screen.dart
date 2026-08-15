@@ -123,10 +123,13 @@ class _HouseholdOnboardingScreenState extends ConsumerState<HouseholdOnboardingS
           FilledButton(
             onPressed: _isSubmitting ? null : _createHousehold,
             child: _isSubmitting
-                ? const SizedBox(
+                ? SizedBox(
                     height: 20,
                     width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                    ))
                 : const Text('Create household'),
           ),
         ],
@@ -159,10 +162,13 @@ class _HouseholdOnboardingScreenState extends ConsumerState<HouseholdOnboardingS
           FilledButton(
             onPressed: _isSubmitting ? null : _joinHousehold,
             child: _isSubmitting
-                ? const SizedBox(
+                ? SizedBox(
                     height: 20,
                     width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                    ))
                 : const Text('Join household'),
           ),
         ],

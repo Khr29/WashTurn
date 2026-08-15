@@ -6,6 +6,8 @@ import '../../../core/models/activity_entry.dart';
 import '../../../core/state/activity_state.dart';
 import '../../../shared/widgets/async_view.dart';
 import '../../../shared/widgets/empty_state.dart';
+import '../../../shared/widgets/profile_avatar_action.dart';
+import '../../../shared/widgets/section_header.dart';
 
 const _icons = {
   'RELEASED': Icons.free_cancellation_outlined,
@@ -15,6 +17,46 @@ const _icons = {
   'EXPIRED': Icons.timer_off_outlined,
 };
 
+sealed class _ActivityListItem {}
+
+class _DateHeaderItem extends _ActivityListItem {
+  final String label;
+  _DateHeaderItem(this.label);
+}
+
+class _EntryItem extends _ActivityListItem {
+  final ActivityEntry entry;
+  _EntryItem(this.entry);
+}
+
+String _dayLabelFor(DateTime timestamp) {
+  final local = timestamp.toLocal();
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final date = DateTime(local.year, local.month, local.day);
+  final diff = today.difference(date).inDays;
+  if (diff == 0) return 'Today';
+  if (diff == 1) return 'Yesterday';
+  return DateFormat.MMMd().format(local);
+}
+
+// Entries already arrive newest-first from the backend, so consecutive
+// same-day entries are already adjacent — a single pass is enough to insert
+// "Today" / "Yesterday" / "Aug 14" separators between day groups.
+List<_ActivityListItem> _groupByDay(List<ActivityEntry> entries) {
+  final items = <_ActivityListItem>[];
+  String? lastLabel;
+  for (final entry in entries) {
+    final label = _dayLabelFor(entry.timestamp);
+    if (label != lastLabel) {
+      items.add(_DateHeaderItem(label));
+      lastLabel = label;
+    }
+    items.add(_EntryItem(entry));
+  }
+  return items;
+}
+
 class ActivityScreen extends ConsumerWidget {
   const ActivityScreen({super.key});
 
@@ -23,7 +65,7 @@ class ActivityScreen extends ConsumerWidget {
     final activityAsync = ref.watch(activityProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Activity')),
+      appBar: AppBar(title: const Text('Activity'), actions: const [ProfileAvatarAction()]),
       body: AsyncView(
         value: activityAsync,
         onRetry: () => ref.read(activityProvider.notifier).refresh(),
@@ -36,6 +78,8 @@ class ActivityScreen extends ConsumerWidget {
             );
           }
 
+          final items = _groupByDay(list.entries);
+
           return RefreshIndicator(
             onRefresh: () => ref.read(activityProvider.notifier).refresh(),
             child: NotificationListener<ScrollNotification>(
@@ -45,18 +89,27 @@ class ActivityScreen extends ConsumerWidget {
                 }
                 return false;
               },
-              child: ListView.separated(
+              child: ListView.builder(
                 padding: const EdgeInsets.all(20),
-                itemCount: list.entries.length + (list.hasMore ? 1 : 0),
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                itemCount: items.length + (list.hasMore ? 1 : 0),
                 itemBuilder: (context, index) {
-                  if (index >= list.entries.length) {
+                  if (index >= items.length) {
                     return const Padding(
                       padding: EdgeInsets.symmetric(vertical: 16),
                       child: Center(child: CircularProgressIndicator()),
                     );
                   }
-                  return _ActivityTile(entry: list.entries[index]);
+                  final item = items[index];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: switch (item) {
+                      _DateHeaderItem() => Padding(
+                          padding: EdgeInsets.only(top: index == 0 ? 0 : 8, bottom: 2),
+                          child: SectionHeader(title: item.label),
+                        ),
+                      _EntryItem() => _ActivityTile(entry: item.entry),
+                    },
+                  );
                 },
               ),
             ),
@@ -82,9 +135,7 @@ class _ActivityTile extends StatelessWidget {
           child: Icon(_icons[entry.type] ?? Icons.info_outline, color: theme.colorScheme.onPrimaryContainer),
         ),
         title: Text(entry.summary),
-        subtitle: Text(
-          '${entry.userName ?? 'Someone'} · ${DateFormat.MMMd().add_jm().format(entry.timestamp.toLocal())}',
-        ),
+        subtitle: Text('${entry.userName ?? 'Someone'} · ${DateFormat.jm().format(entry.timestamp.toLocal())}'),
       ),
     );
   }

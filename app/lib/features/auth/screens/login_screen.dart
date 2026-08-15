@@ -48,11 +48,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const SizedBox(height: 32),
-                  Text('WashTurn', style: Theme.of(context).textTheme.headlineMedium),
-                  const SizedBox(height: 8),
+                  Text('🧺 WashTurn', style: Theme.of(context).textTheme.headlineMedium),
+                  const SizedBox(height: 12),
+                  Text('Welcome back', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
                   Text(
                     'Sign in to see who has the machine today.',
-                    style: Theme.of(context).textTheme.bodyMedium,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                   ),
                   const SizedBox(height: 32),
                   TextFormField(
@@ -77,10 +81,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   FilledButton(
                     onPressed: isLoading ? null : _submit,
                     child: isLoading
-                        ? const SizedBox(
+                        ? SizedBox(
                             height: 20,
                             width: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Theme.of(context).colorScheme.onPrimary,
+                            ),
                           )
                         : const Text('Log in'),
                   ),

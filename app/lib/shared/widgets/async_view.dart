@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/utils/friendly_error.dart';
+
 /// Standard loading/error/data handling for AsyncValue so every screen
 /// renders consistent loading and error states instead of ad-hoc spinners.
 class AsyncView<T> extends StatelessWidget {
@@ -21,10 +23,10 @@ class AsyncView<T> extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, size: 40, color: Theme.of(context).colorScheme.error),
+              Icon(Icons.wifi_off_rounded, size: 40, color: Theme.of(context).colorScheme.onSurfaceVariant),
               const SizedBox(height: 12),
               Text(
-                'Something went wrong.\n${err.toString()}',
+                friendlyErrorMessage(err),
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
