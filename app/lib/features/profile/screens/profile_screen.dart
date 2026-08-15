@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/household.dart';
+import '../../../core/models/notification_preferences.dart';
 import '../../../core/state/auth_state.dart';
 import '../../../core/state/household_state.dart';
+import '../../../core/state/notification_preferences_state.dart';
 import '../../../core/state/providers.dart';
 import '../../../shared/widgets/async_view.dart';
 
@@ -40,6 +42,8 @@ class ProfileScreen extends ConsumerWidget {
                 currentUserId: currentUserId,
                 householdId: household.id,
               ),
+              const SizedBox(height: 16),
+              const _NotificationSettingsCard(),
               const SizedBox(height: 24),
               OutlinedButton.icon(
                 onPressed: () => ref.read(authStateProvider.notifier).logout(),
@@ -185,5 +189,71 @@ class _MembersCard extends ConsumerWidget {
         ),
       ),
     );
+  }
+}
+
+const _notificationCategoryLabels = {
+  'turnToday': ('Your turn', 'When it\'s your day on the schedule'),
+  'turnTomorrow': ('Turn tomorrow', 'A heads-up the day before your turn'),
+  'machineStarted': ('Machine started', 'When someone starts a wash'),
+  'machineFinished': ('Machine finished', 'When the machine becomes free'),
+  'emergencyActivity': ('Emergency activity', 'Releases and emergency claims'),
+};
+
+class _NotificationSettingsCard extends ConsumerWidget {
+  const _NotificationSettingsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final prefsAsync = ref.watch(notificationPreferencesProvider);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text('Notifications', style: theme.textTheme.titleMedium),
+            ),
+            const SizedBox(height: 4),
+            AsyncView(
+              value: prefsAsync,
+              builder: (context, prefs) => Column(
+                children: [
+                  for (final entry in _notificationCategoryLabels.entries)
+                    SwitchListTile(
+                      title: Text(entry.value.$1),
+                      subtitle: Text(entry.value.$2),
+                      value: _valueFor(prefs, entry.key),
+                      onChanged: (value) =>
+                          ref.read(notificationPreferencesProvider.notifier).setCategory(entry.key, value),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _valueFor(NotificationPreferences prefs, String key) {
+    switch (key) {
+      case 'turnToday':
+        return prefs.turnToday;
+      case 'turnTomorrow':
+        return prefs.turnTomorrow;
+      case 'machineStarted':
+        return prefs.machineStarted;
+      case 'machineFinished':
+        return prefs.machineFinished;
+      case 'emergencyActivity':
+        return prefs.emergencyActivity;
+      default:
+        return true;
+    }
   }
 }

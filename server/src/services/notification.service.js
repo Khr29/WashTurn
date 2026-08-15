@@ -25,9 +25,21 @@ async function unregisterToken(userId, token) {
   await DeviceToken.deleteOne({ token, userId });
 }
 
+const DEFAULT_PREFERENCES = {
+  turnToday: true,
+  turnTomorrow: true,
+  machineStarted: true,
+  machineFinished: true,
+  emergencyActivity: true,
+};
+
+// Falls back to all-enabled defaults for a user document that predates the
+// notificationPreferences field — Mongoose only applies schema defaults at
+// document construction, not when reading a pre-existing document that
+// simply lacks the field, so this can't rely on the schema default alone.
 async function getPreferences(userId) {
   const user = await User.findById(userId).select('notificationPreferences');
-  return user?.notificationPreferences;
+  return user?.notificationPreferences || DEFAULT_PREFERENCES;
 }
 
 async function updatePreferences(userId, updates) {
@@ -115,7 +127,7 @@ async function notifyTurnStartedImpl(turn) {
   });
 }
 
-async function notifyTurnReleased(turn) {
+async function notifyTurnReleasedImpl(turn) {
   const name = await usernameFor(turn.scheduledUserId);
   await notifyHousehold(turn.householdId, turn.scheduledUserId, 'emergencyActivity', {
     title: '🚨 WashTurn',
@@ -124,7 +136,7 @@ async function notifyTurnReleased(turn) {
   });
 }
 
-async function notifyEmergencyClaimed(turn) {
+async function notifyEmergencyClaimedImpl(turn) {
   const name = await usernameFor(turn.actingUserId);
   await notifyHousehold(turn.householdId, turn.actingUserId, 'emergencyActivity', {
     title: '🚨 WashTurn',
@@ -133,7 +145,7 @@ async function notifyEmergencyClaimed(turn) {
   });
 }
 
-async function notifyTurnFinished(turn) {
+async function notifyTurnFinishedImpl(turn) {
   const name = await usernameFor(turn.actingUserId);
   await notifyHousehold(turn.householdId, turn.actingUserId, 'machineFinished', {
     title: '✅ WashTurn',
@@ -142,7 +154,7 @@ async function notifyTurnFinished(turn) {
   });
 }
 
-async function notifyTurnReminder(turn, when) {
+async function notifyTurnReminderImpl(turn, when) {
   const category = when === 'today' ? 'turnToday' : 'turnTomorrow';
   await sendToUsers([turn.scheduledUserId], category, {
     title: when === 'today' ? '🧺 WashTurn' : '⏰ WashTurn',
@@ -159,9 +171,9 @@ module.exports = {
   unregisterToken,
   getPreferences,
   updatePreferences,
-  notifyTurnStarted,
-  notifyTurnReleased,
-  notifyEmergencyClaimed,
-  notifyTurnFinished,
-  notifyTurnReminder,
+  notifyTurnStarted: safe(notifyTurnStartedImpl),
+  notifyTurnReleased: safe(notifyTurnReleasedImpl),
+  notifyEmergencyClaimed: safe(notifyEmergencyClaimedImpl),
+  notifyTurnFinished: safe(notifyTurnFinishedImpl),
+  notifyTurnReminder: safe(notifyTurnReminderImpl),
 };

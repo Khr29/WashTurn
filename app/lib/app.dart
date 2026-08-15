@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/app_globals.dart';
 import 'core/state/auth_state.dart';
 import 'core/state/household_state.dart';
 import 'core/theme/app_theme.dart';
@@ -17,6 +18,7 @@ class WashTurnApp extends ConsumerWidget {
     return MaterialApp(
       title: 'WashTurn',
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: scaffoldMessengerKey,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.system,

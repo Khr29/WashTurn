@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../features/notifications/fcm_service.dart';
 import '../api/api_exception.dart';
 import '../models/user.dart';
 import 'providers.dart';
@@ -76,6 +77,17 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> logout() async {
+    // Best-effort and must run before the token is cleared below (the
+    // unregister call needs a still-valid JWT) — this device shouldn't keep
+    // receiving push notifications for an account it's no longer signed
+    // into, e.g. if someone else logs in on the same device afterward.
+    try {
+      await FcmService(ref).unregisterCurrentToken();
+    } catch (_) {
+      // Not fatal to logging out — a stale token left registered is a minor
+      // annoyance, not a broken session.
+    }
+
     try {
       await ref.read(authRepositoryProvider).logout();
     } on ApiException {
