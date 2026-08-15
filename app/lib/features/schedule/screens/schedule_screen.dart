@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_exception.dart';
 import '../../../core/models/household.dart';
 import '../../../core/models/schedule.dart';
 import '../../../core/state/auth_state.dart';
+import '../../../core/state/home_state.dart';
 import '../../../core/state/household_state.dart';
 import '../../../core/state/providers.dart';
+import '../../../core/utils/schedule_utils.dart';
 import '../../../shared/widgets/async_view.dart';
 
 const _dayNames = {
@@ -32,7 +35,10 @@ class ScheduleScreen extends ConsumerWidget {
     final membersAsync = ref.watch(membersProvider);
     final authState = ref.watch(authStateProvider);
     final currentUserId = authState is AuthAuthenticated ? authState.user.id : null;
-    final todayDayOfWeek = DateTime.now().weekday % 7;
+    // "Today" must come from the backend (household-timezone-aware), never the
+    // device clock — the schedule can't be highlighted correctly otherwise.
+    final todayDateString = ref.watch(homeProvider).value?.turn.date;
+    final todayDayOfWeek = todayDateString != null ? dayOfWeekFromDateString(todayDateString) : null;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Schedule')),
@@ -54,7 +60,7 @@ class ScheduleScreen extends ConsumerWidget {
               itemBuilder: (context, index) {
                 final dayOfWeek = _displayOrder[index];
                 final entry = schedule.forDay(dayOfWeek);
-                final isToday = dayOfWeek == todayDayOfWeek;
+                final isToday = todayDayOfWeek != null && dayOfWeek == todayDayOfWeek;
                 final matchingMembers = members.where((m) => m.id == entry.userId);
                 final memberName = matchingMembers.isEmpty ? 'Unassigned' : matchingMembers.first.name;
 
@@ -106,6 +112,7 @@ class ScheduleScreen extends ConsumerWidget {
     );
 
     if (selectedUserId == null || selectedUserId == entry.userId) return;
+    if (!context.mounted) return;
 
     final updatedDays = schedule.days
         .map((d) => d.dayOfWeek == entry.dayOfWeek ? d.copyWith(userId: selectedUserId) : d)
@@ -113,8 +120,19 @@ class ScheduleScreen extends ConsumerWidget {
 
     final householdId = ref.read(householdIdProvider).value;
     if (householdId == null) return;
-    await ref.read(householdRepositoryProvider).updateSchedule(householdId, updatedDays);
-    ref.invalidate(scheduleProvider);
+
+    try {
+      await ref.read(householdRepositoryProvider).updateSchedule(householdId, updatedDays);
+      ref.invalidate(scheduleProvider);
+    } on ApiException catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not reach the server. Check your connection and try again.')),
+      );
+    }
   }
 }
 

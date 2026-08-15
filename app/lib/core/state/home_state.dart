@@ -41,6 +41,11 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
     } on ApiException catch (e) {
       await refresh();
       return e.message;
+    } catch (_) {
+      // Network failure etc. — the action may or may not have gone through
+      // server-side, so refresh to reflect whatever the real state is.
+      await refresh();
+      return 'Could not reach the server. Check your connection and try again.';
     }
   }
 

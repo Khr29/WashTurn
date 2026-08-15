@@ -50,6 +50,8 @@ class _HouseholdOnboardingScreenState extends ConsumerState<HouseholdOnboardingS
       await ref.read(householdIdProvider.notifier).set(household.id);
     } on ApiException catch (e) {
       setState(() => _error = e.message);
+    } catch (_) {
+      setState(() => _error = 'Could not reach the server. Check your connection and try again.');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -70,6 +72,8 @@ class _HouseholdOnboardingScreenState extends ConsumerState<HouseholdOnboardingS
       await ref.read(householdIdProvider.notifier).set(household.id);
     } on ApiException catch (e) {
       setState(() => _error = e.message);
+    } catch (_) {
+      setState(() => _error = 'Could not reach the server. Check your connection and try again.');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }

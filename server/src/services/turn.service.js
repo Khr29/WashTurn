@@ -5,7 +5,6 @@ const ActivityLog = require('../models/ActivityLog');
 const { ApiError } = require('../utils/ApiError');
 const { getHouseholdDateParts } = require('../utils/dateHelpers');
 const { getScheduledUserId } = require('./schedule.service');
-const { syncMachineFromTurn } = require('./machine.service');
 const notificationService = require('./notification.service');
 
 async function logActivity(turn, userId, type, summary) {
@@ -45,6 +44,25 @@ async function getOrCreateTodayTurn(household) {
   );
 
   return turn;
+}
+
+// The turn that reflects what's actually happening right now. Almost always
+// this is today's dated turn, but if a wash was started before midnight and
+// is still IN_USE/CLAIMED when the household's calendar day rolls over, that
+// unfinished turn is what's real — showing a fresh PENDING turn for the new
+// date instead would make the machine look AVAILABLE while it's still
+// physically running. expireStaleTurn deliberately never touches IN_USE/
+// CLAIMED turns (a wash is never auto-terminated), so without this check
+// such a turn would become permanently invisible once the date rolls over.
+async function getCurrentTurn(household) {
+  const activeCarryover = await Turn.findOne({
+    householdId: household._id,
+    status: { $in: ['CLAIMED', 'IN_USE'] },
+  }).sort({ date: -1 });
+
+  if (activeCarryover) return activeCarryover;
+
+  return getOrCreateTodayTurn(household);
 }
 
 async function findTurnOrThrow(turnId) {
@@ -95,7 +113,6 @@ async function startTurn(turnId, userId, { estimatedDurationMinutes } = {}) {
     throw new ApiError(403, 'You are not authorized to start this turn.');
   }
 
-  await syncMachineFromTurn(existing.householdId, updated);
   await logActivity(updated, userId, 'STARTED', `${updated.type === 'EMERGENCY' ? 'Emergency' : 'Scheduled'} wash started.`);
   await notificationService.notifyTurnStarted(updated);
 
@@ -118,7 +135,6 @@ async function releaseTurn(turnId, userId) {
     throw new ApiError(403, 'Only the scheduled user can release this turn.');
   }
 
-  await syncMachineFromTurn(existing.householdId, updated);
   await logActivity(updated, userId, 'RELEASED', 'Scheduled turn released for emergency use.');
   await notificationService.notifyTurnReleased(updated);
 
@@ -133,17 +149,23 @@ async function releaseTurn(turnId, userId) {
 async function claimTurn(turnId, userId) {
   const existing = await findTurnOrThrow(turnId);
 
+  // Releasing hands the opportunity to someone else — the scheduled user
+  // can't turn around and reclaim their own released turn. This is folded
+  // into the atomic condition itself (scheduledUserId: $ne) so it can't be
+  // raced, not just checked ahead of time.
   const updated = await Turn.findOneAndUpdate(
-    { _id: turnId, status: 'RELEASED' },
+    { _id: turnId, status: 'RELEASED', scheduledUserId: { $ne: userId } },
     { $set: { status: 'CLAIMED', actingUserId: userId, type: 'EMERGENCY' } },
     { new: true }
   );
 
   if (!updated) {
+    if (existing.scheduledUserId.toString() === userId) {
+      throw new ApiError(403, 'You released this turn and cannot reclaim it yourself.');
+    }
     throw new ApiError(409, 'This turn is no longer available to claim.');
   }
 
-  await syncMachineFromTurn(existing.householdId, updated);
   await logActivity(updated, userId, 'CLAIMED', 'Emergency turn claimed.');
   await notificationService.notifyEmergencyClaimed(updated);
 
@@ -166,7 +188,6 @@ async function finishTurn(turnId, userId) {
     throw new ApiError(403, 'Only the person currently using the machine can finish this turn.');
   }
 
-  await syncMachineFromTurn(existing.householdId, updated);
   await logActivity(updated, userId, 'COMPLETED', 'Wash completed.');
   await notificationService.notifyTurnFinished(updated);
 
@@ -190,6 +211,7 @@ async function expireStaleTurn(turn) {
 
 module.exports = {
   getOrCreateTodayTurn,
+  getCurrentTurn,
   findTurnOrThrow,
   startTurn,
   releaseTurn,

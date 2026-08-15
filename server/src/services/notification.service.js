@@ -1,6 +1,15 @@
 const DeviceToken = require('../models/DeviceToken');
 const User = require('../models/User');
+const Household = require('../models/Household');
 const { getMessaging } = require('../config/firebase');
+
+// FCM error codes that mean "this token will never work again" — safe to
+// delete rather than retry indefinitely.
+const DEAD_TOKEN_ERROR_CODES = new Set([
+  'messaging/registration-token-not-registered',
+  'messaging/invalid-registration-token',
+  'messaging/invalid-argument',
+]);
 
 async function registerToken({ userId, token, platform }) {
   await DeviceToken.findOneAndUpdate(
@@ -10,24 +19,62 @@ async function registerToken({ userId, token, platform }) {
   );
 }
 
-async function unregisterToken(token) {
-  await DeviceToken.deleteOne({ token });
+// Scoped to the caller's own userId so one user can never remove another
+// user's device token.
+async function unregisterToken(userId, token) {
+  await DeviceToken.deleteOne({ token, userId });
 }
 
-async function sendToUsers(userIds, { title, body }) {
-  const messaging = getMessaging();
-  if (!messaging) return; // notifications disabled (no Firebase credentials configured)
+async function getPreferences(userId) {
+  const user = await User.findById(userId).select('notificationPreferences');
+  return user?.notificationPreferences;
+}
 
-  const tokens = await DeviceToken.find({ userId: { $in: userIds } }).select('token');
-  if (tokens.length === 0) return;
+async function updatePreferences(userId, updates) {
+  const allowedKeys = ['turnToday', 'turnTomorrow', 'machineStarted', 'machineFinished', 'emergencyActivity'];
+  const $set = {};
+  for (const key of allowedKeys) {
+    if (typeof updates[key] === 'boolean') {
+      $set[`notificationPreferences.${key}`] = updates[key];
+    }
+  }
+  const user = await User.findByIdAndUpdate(userId, { $set }, { new: true }).select('notificationPreferences');
+  return user.notificationPreferences;
+}
 
+// Sends to whichever of `userIds` have `category` enabled (defaulting to
+// enabled if a user predates the preferences field). Never throws — a
+// notification is a side effect of an already-committed state change, and a
+// delivery failure must never turn a successful machine operation into a
+// failed API response.
+async function sendToUsers(userIds, category, { title, body, data }) {
   try {
-    await messaging.sendEachForMulticast({
+    const messaging = getMessaging();
+    if (!messaging || userIds.length === 0) return;
+
+    const recipients = await User.find({ _id: { $in: userIds } }).select('notificationPreferences');
+    const eligibleIds = recipients
+      .filter((u) => u.notificationPreferences?.[category] !== false)
+      .map((u) => u._id.toString());
+    if (eligibleIds.length === 0) return;
+
+    const tokens = await DeviceToken.find({ userId: { $in: eligibleIds } }).select('token');
+    if (tokens.length === 0) return;
+
+    const response = await messaging.sendEachForMulticast({
       tokens: tokens.map((t) => t.token),
       notification: { title, body },
+      data: data || {},
     });
+
+    const deadTokens = response.responses
+      .map((r, i) => (!r.success && DEAD_TOKEN_ERROR_CODES.has(r.error?.code) ? tokens[i].token : null))
+      .filter(Boolean);
+    if (deadTokens.length > 0) {
+      await DeviceToken.deleteMany({ token: { $in: deadTokens } });
+    }
   } catch (err) {
-    console.error('FCM send failed:', err.message);
+    console.error('Notification dispatch failed:', err.message);
   }
 }
 
@@ -37,60 +84,81 @@ async function usernameFor(userId) {
 }
 
 // Notifies everyone in the household except `excludeUserId`.
-async function notifyHousehold(householdId, excludeUserId, payload) {
-  const Household = require('../models/Household');
+async function notifyHousehold(householdId, excludeUserId, category, payload) {
   const household = await Household.findById(householdId).select('members');
   const recipients = household.members
     .map((m) => m.userId.toString())
     .filter((id) => id !== excludeUserId.toString());
-  await sendToUsers(recipients, payload);
+  await sendToUsers(recipients, category, payload);
 }
 
-async function notifyTurnStarted(turn) {
+// A notification failure — anywhere in the pipeline, not just the FCM call —
+// must never turn an already-successful machine operation into a failed API
+// response. Every publicly exported notify* function is wrapped with this so
+// callers in turn.service.js never need a try/catch of their own.
+function safe(fn) {
+  return async (...args) => {
+    try {
+      await fn(...args);
+    } catch (err) {
+      console.error(`Notification failed (${fn.name}):`, err.message);
+    }
+  };
+}
+
+async function notifyTurnStartedImpl(turn) {
   const name = await usernameFor(turn.actingUserId);
-  await notifyHousehold(turn.householdId, turn.actingUserId, {
-    title: 'Machine in use',
-    body: `${name} started ${turn.type === 'EMERGENCY' ? 'an emergency ' : 'a '}wash.`,
+  await notifyHousehold(turn.householdId, turn.actingUserId, 'machineStarted', {
+    title: '🧺 WashTurn',
+    body: `${name} started using the washing machine.`,
+    data: { type: 'TURN_STARTED', turnId: turn._id.toString() },
   });
 }
 
 async function notifyTurnReleased(turn) {
   const name = await usernameFor(turn.scheduledUserId);
-  await notifyHousehold(turn.householdId, turn.scheduledUserId, {
-    title: 'Turn released',
-    body: `${name} released today's turn. The machine is free for emergency use.`,
+  await notifyHousehold(turn.householdId, turn.scheduledUserId, 'emergencyActivity', {
+    title: '🚨 WashTurn',
+    body: `${name} released today's turn. The machine is available for emergency use.`,
+    data: { type: 'TURN_RELEASED', turnId: turn._id.toString() },
   });
 }
 
 async function notifyEmergencyClaimed(turn) {
   const name = await usernameFor(turn.actingUserId);
-  await notifyHousehold(turn.householdId, turn.actingUserId, {
-    title: 'Emergency turn claimed',
-    body: `${name} claimed today's released turn.`,
+  await notifyHousehold(turn.householdId, turn.actingUserId, 'emergencyActivity', {
+    title: '🚨 WashTurn',
+    body: `${name} claimed the washing machine for an emergency.`,
+    data: { type: 'EMERGENCY_CLAIMED', turnId: turn._id.toString() },
   });
 }
 
 async function notifyTurnFinished(turn) {
   const name = await usernameFor(turn.actingUserId);
-  await notifyHousehold(turn.householdId, turn.actingUserId, {
-    title: 'Machine free',
-    body: `${name} finished washing. The machine is available.`,
+  await notifyHousehold(turn.householdId, turn.actingUserId, 'machineFinished', {
+    title: '✅ WashTurn',
+    body: `${name} finished using the washing machine. It's available now.`,
+    data: { type: 'TURN_FINISHED', turnId: turn._id.toString() },
   });
 }
 
 async function notifyTurnReminder(turn, when) {
-  await sendToUsers([turn.scheduledUserId], {
-    title: when === 'today' ? 'Your turn is today' : 'Your turn is tomorrow',
+  const category = when === 'today' ? 'turnToday' : 'turnTomorrow';
+  await sendToUsers([turn.scheduledUserId], category, {
+    title: when === 'today' ? '🧺 WashTurn' : '⏰ WashTurn',
     body:
       when === 'today'
-        ? "It's your day for the washing machine."
-        : 'The washing machine is scheduled to be yours tomorrow.',
+        ? "It's your washing-machine turn today."
+        : 'Your washing-machine turn is tomorrow.',
+    data: { type: when === 'today' ? 'TURN_TODAY' : 'TURN_TOMORROW' },
   });
 }
 
 module.exports = {
   registerToken,
   unregisterToken,
+  getPreferences,
+  updatePreferences,
   notifyTurnStarted,
   notifyTurnReleased,
   notifyEmergencyClaimed,

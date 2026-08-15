@@ -38,8 +38,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final user = await ref.read(authRepositoryProvider).me();
       state = AuthAuthenticated(user);
     } on ApiException {
+      // Token is invalid/expired server-side — discard it and require login again.
       await ref.read(tokenStoreProvider).clear();
       state = const AuthUnauthenticated();
+    } catch (_) {
+      // Network failure etc.: keep the token (it may still be valid) and let
+      // the user retry from the login screen rather than getting stuck on a
+      // splash screen forever.
+      state = const AuthUnauthenticated(error: 'Could not reach the server. Check your connection and try again.');
     }
   }
 
@@ -51,6 +57,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthAuthenticated(result.user);
     } on ApiException catch (e) {
       state = AuthUnauthenticated(error: e.message);
+    } catch (_) {
+      state = const AuthUnauthenticated(error: 'Could not reach the server. Check your connection and try again.');
     }
   }
 
@@ -62,6 +70,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthAuthenticated(result.user);
     } on ApiException catch (e) {
       state = AuthUnauthenticated(error: e.message);
+    } catch (_) {
+      state = const AuthUnauthenticated(error: 'Could not reach the server. Check your connection and try again.');
     }
   }
 
