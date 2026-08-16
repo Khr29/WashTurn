@@ -7,7 +7,7 @@ const activityLogSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     type: {
       type: String,
-      enum: ['RELEASED', 'CLAIMED', 'STARTED', 'COMPLETED', 'EXPIRED'],
+      enum: ['RELEASED', 'CLAIMED', 'STARTED', 'COMPLETED', 'EXPIRED', 'TRANSFERRED'],
       required: true,
     },
     summary: { type: String, required: true },

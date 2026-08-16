@@ -2,13 +2,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_exception.dart';
 import '../models/turn.dart';
+import '../models/turn_request.dart';
 import 'household_state.dart';
 import 'providers.dart';
 
 class HomeData {
   final Machine machine;
   final Turn turn;
-  HomeData({required this.machine, required this.turn});
+  final List<TurnRequest> requests;
+  HomeData({required this.machine, required this.turn, required this.requests});
 }
 
 class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
@@ -22,9 +24,12 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
   Future<void> refresh() async {
     state = const AsyncValue.loading();
     try {
-      final repo = ref.read(householdRepositoryProvider);
-      final results = await Future.wait([repo.getMachine(householdId), repo.getTodayTurn(householdId)]);
-      state = AsyncValue.data(HomeData(machine: results[0] as Machine, turn: results[1] as Turn));
+      final householdRepo = ref.read(householdRepositoryProvider);
+      final results = await Future.wait([householdRepo.getMachine(householdId), householdRepo.getTodayTurn(householdId)]);
+      final machine = results[0] as Machine;
+      final turn = results[1] as Turn;
+      final requests = await ref.read(turnRepositoryProvider).getRequests(turn.id);
+      state = AsyncValue.data(HomeData(machine: machine, turn: turn, requests: requests));
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
@@ -38,7 +43,7 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
   /// — used by [claim] so a lost emergency-claim race reads as a friendly
   /// "someone beat you to it" rather than the backend's generic conflict
   /// wording (which is accurate but written for any 409, not this one).
-  Future<String?> _runAction(Future<Turn> Function() action, {String? conflictMessage}) async {
+  Future<String?> _runAction<T>(Future<T> Function() action, {String? conflictMessage}) async {
     try {
       await action();
       await refresh();
@@ -76,6 +81,34 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
   Future<String?> finish() {
     final turnId = state.value!.turn.id;
     return _runAction(() => ref.read(turnRepositoryProvider).finish(turnId));
+  }
+
+  Future<String?> transfer(String toUserId) {
+    final turnId = state.value!.turn.id;
+    return _runAction(() => ref.read(turnRepositoryProvider).transfer(turnId, toUserId));
+  }
+
+  Future<String?> requestTurn() {
+    final turnId = state.value!.turn.id;
+    return _runAction(() => ref.read(turnRepositoryProvider).requestTurn(turnId));
+  }
+
+  Future<String?> acceptRequest(String requestId) {
+    final turnId = state.value!.turn.id;
+    return _runAction(
+      () => ref.read(turnRepositoryProvider).acceptRequest(turnId, requestId),
+      conflictMessage: 'This request is no longer available to accept.',
+    );
+  }
+
+  Future<String?> rejectRequest(String requestId) {
+    final turnId = state.value!.turn.id;
+    return _runAction(() => ref.read(turnRepositoryProvider).rejectRequest(turnId, requestId));
+  }
+
+  Future<String?> cancelRequest(String requestId) {
+    final turnId = state.value!.turn.id;
+    return _runAction(() => ref.read(turnRepositoryProvider).cancelRequest(turnId, requestId));
   }
 }
 

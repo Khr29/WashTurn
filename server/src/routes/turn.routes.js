@@ -22,4 +22,23 @@ router.post('/:id/release', requireHouseholdMember(resolveHouseholdIdFromTurn), 
 router.post('/:id/claim', requireHouseholdMember(resolveHouseholdIdFromTurn), turnController.claim);
 router.post('/:id/finish', requireHouseholdMember(resolveHouseholdIdFromTurn), turnController.finish);
 
+router.post('/:id/transfer', requireHouseholdMember(resolveHouseholdIdFromTurn), turnController.transfer);
+router.get('/:id/requests', requireHouseholdMember(resolveHouseholdIdFromTurn), turnController.listRequests);
+router.post('/:id/requests', requireHouseholdMember(resolveHouseholdIdFromTurn), turnController.createRequest);
+router.post(
+  '/:id/requests/:requestId/accept',
+  requireHouseholdMember(resolveHouseholdIdFromTurn),
+  turnController.acceptRequest
+);
+router.post(
+  '/:id/requests/:requestId/reject',
+  requireHouseholdMember(resolveHouseholdIdFromTurn),
+  turnController.rejectRequest
+);
+router.post(
+  '/:id/requests/:requestId/cancel',
+  requireHouseholdMember(resolveHouseholdIdFromTurn),
+  turnController.cancelRequest
+);
+
 module.exports = router;

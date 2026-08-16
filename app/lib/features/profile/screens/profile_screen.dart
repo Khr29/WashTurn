@@ -178,6 +178,7 @@ const _notificationCategoryLabels = {
   'machineStarted': ('Machine started', 'When someone starts a wash'),
   'machineFinished': ('Machine finished', 'When the machine becomes free'),
   'emergencyActivity': ('Emergency activity', 'Releases and emergency claims'),
+  'turnRequests': ('Turn requests', 'Requests, transfers, and responses to your turns'),
 };
 
 class _NotificationSettingsCard extends ConsumerWidget {
@@ -232,6 +233,8 @@ class _NotificationSettingsCard extends ConsumerWidget {
         return prefs.machineFinished;
       case 'emergencyActivity':
         return prefs.emergencyActivity;
+      case 'turnRequests':
+        return prefs.turnRequests;
       default:
         return true;
     }

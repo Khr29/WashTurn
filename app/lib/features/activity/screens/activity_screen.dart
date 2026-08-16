@@ -15,6 +15,7 @@ const _icons = {
   'STARTED': Icons.play_arrow,
   'COMPLETED': Icons.check_circle_outline,
   'EXPIRED': Icons.timer_off_outlined,
+  'TRANSFERRED': Icons.card_giftcard_outlined,
 };
 
 sealed class _ActivityListItem {}

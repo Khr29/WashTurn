@@ -43,4 +43,48 @@ const finish = asyncHandler(async (req, res) => {
   res.json({ turn });
 });
 
-module.exports = { start, release, claim, finish };
+const transfer = asyncHandler(async (req, res) => {
+  const { toUserId } = req.body;
+  if (!toUserId) throw new ApiError(400, 'toUserId is required.');
+
+  const turn = await turnService.transferTurn(req.params.id, req.user.id, toUserId);
+  res.json({ turn });
+});
+
+const createRequest = asyncHandler(async (req, res) => {
+  const request = await turnService.createTurnRequest(req.params.id, req.user.id);
+  res.status(201).json({ request });
+});
+
+const listRequests = asyncHandler(async (req, res) => {
+  const requests = await turnService.listTurnRequests(req.params.id);
+  res.json({ requests });
+});
+
+const acceptRequest = asyncHandler(async (req, res) => {
+  const { turn, request } = await turnService.acceptTurnRequest(req.params.id, req.params.requestId, req.user.id);
+  res.json({ turn, request });
+});
+
+const rejectRequest = asyncHandler(async (req, res) => {
+  const request = await turnService.rejectTurnRequest(req.params.id, req.params.requestId, req.user.id);
+  res.json({ request });
+});
+
+const cancelRequest = asyncHandler(async (req, res) => {
+  const request = await turnService.cancelTurnRequest(req.params.id, req.params.requestId, req.user.id);
+  res.json({ request });
+});
+
+module.exports = {
+  start,
+  release,
+  claim,
+  finish,
+  transfer,
+  createRequest,
+  listRequests,
+  acceptRequest,
+  rejectRequest,
+  cancelRequest,
+};

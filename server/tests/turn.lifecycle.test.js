@@ -73,7 +73,11 @@ describe('normal turn flow', () => {
       .expect(200);
     expect(finish.body.turn.status).toBe('COMPLETED');
     expect(finish.body.turn.finishedAt).not.toBeNull();
-    expect((await getMachine(owner.token, household._id)).status).toBe('COMPLETED');
+    // The machine no longer "freezes" on COMPLETED for the rest of the day —
+    // finishing immediately frees it up for another turn the same day (see
+    // the multi-turn-per-day model in turn.service.js), so the very next
+    // lookup materializes a fresh PENDING turn and the machine reads AVAILABLE.
+    expect((await getMachine(owner.token, household._id)).status).toBe('AVAILABLE');
   });
 
   test('rejects invalid estimated durations', async () => {
@@ -233,7 +237,9 @@ describe('emergency flow', () => {
       .set('Authorization', `Bearer ${emergencyUser.token}`)
       .expect(200);
     expect(finish.body.turn.status).toBe('COMPLETED');
-    expect((await getMachine(owner.token, household._id)).status).toBe('COMPLETED');
+    // See the equivalent comment in 'normal turn flow' above — finishing
+    // frees the machine immediately rather than freezing it for the day.
+    expect((await getMachine(owner.token, household._id)).status).toBe('AVAILABLE');
   });
 
   test('claiming a turn that was never released is rejected', async () => {

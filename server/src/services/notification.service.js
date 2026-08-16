@@ -31,6 +31,7 @@ const DEFAULT_PREFERENCES = {
   machineStarted: true,
   machineFinished: true,
   emergencyActivity: true,
+  turnRequests: true,
 };
 
 // Falls back to all-enabled defaults for a user document that predates the
@@ -43,7 +44,14 @@ async function getPreferences(userId) {
 }
 
 async function updatePreferences(userId, updates) {
-  const allowedKeys = ['turnToday', 'turnTomorrow', 'machineStarted', 'machineFinished', 'emergencyActivity'];
+  const allowedKeys = [
+    'turnToday',
+    'turnTomorrow',
+    'machineStarted',
+    'machineFinished',
+    'emergencyActivity',
+    'turnRequests',
+  ];
   const $set = {};
   for (const key of allowedKeys) {
     if (typeof updates[key] === 'boolean') {
@@ -154,6 +162,41 @@ async function notifyTurnFinishedImpl(turn) {
   });
 }
 
+async function notifyTurnRequestedImpl(turn, requesterId) {
+  const name = await usernameFor(requesterId);
+  await sendToUsers([turn.scheduledUserId], 'turnRequests', {
+    title: '🙋 WashTurn',
+    body: `${name} requested your turn.`,
+    data: { type: 'TURN_REQUESTED', turnId: turn._id.toString() },
+  });
+}
+
+async function notifyRequestAcceptedImpl(turn, requesterId) {
+  await sendToUsers([requesterId], 'turnRequests', {
+    title: '🧺 WashTurn',
+    body: 'Your turn request was accepted. The turn is yours now.',
+    data: { type: 'TURN_REQUEST_ACCEPTED', turnId: turn._id.toString() },
+  });
+}
+
+async function notifyRequestRejectedImpl(turn, requesterId) {
+  const name = await usernameFor(turn.scheduledUserId);
+  await sendToUsers([requesterId], 'turnRequests', {
+    title: '🧺 WashTurn',
+    body: `${name} declined your turn request.`,
+    data: { type: 'TURN_REQUEST_REJECTED', turnId: turn._id.toString() },
+  });
+}
+
+async function notifyTurnTransferredImpl(turn, fromUserId, toUserId) {
+  const name = await usernameFor(fromUserId);
+  await sendToUsers([toUserId], 'turnRequests', {
+    title: '🧺 WashTurn',
+    body: `${name} gave you their turn.`,
+    data: { type: 'TURN_TRANSFERRED', turnId: turn._id.toString() },
+  });
+}
+
 async function notifyTurnReminderImpl(turn, when) {
   const category = when === 'today' ? 'turnToday' : 'turnTomorrow';
   await sendToUsers([turn.scheduledUserId], category, {
@@ -176,4 +219,8 @@ module.exports = {
   notifyEmergencyClaimed: safe(notifyEmergencyClaimedImpl),
   notifyTurnFinished: safe(notifyTurnFinishedImpl),
   notifyTurnReminder: safe(notifyTurnReminderImpl),
+  notifyTurnRequested: safe(notifyTurnRequestedImpl),
+  notifyRequestAccepted: safe(notifyRequestAcceptedImpl),
+  notifyRequestRejected: safe(notifyRequestRejectedImpl),
+  notifyTurnTransferred: safe(notifyTurnTransferredImpl),
 };

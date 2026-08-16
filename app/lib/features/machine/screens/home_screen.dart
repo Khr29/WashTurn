@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../../core/models/household.dart';
 import '../../../core/models/schedule.dart';
 import '../../../core/models/turn.dart';
+import '../../../core/models/turn_request.dart';
 import '../../../core/state/auth_state.dart';
 import '../../../core/state/home_state.dart';
 import '../../../core/state/household_state.dart';
@@ -14,6 +15,8 @@ import '../../../shared/widgets/confirm_sheet.dart';
 import '../../../shared/widgets/member_avatar.dart';
 import '../../../shared/widgets/section_header.dart';
 import '../../profile/screens/profile_screen.dart';
+
+bool _isTerminal(TurnStatus status) => status == TurnStatus.completed || status == TurnStatus.expired;
 
 const _dayNames = {
   0: 'Sunday',
@@ -78,6 +81,13 @@ class HomeScreen extends ConsumerWidget {
                         ),
                         const SizedBox(height: 16),
                         _ActionCard(turn: data.turn, currentUserId: currentUserId, members: members),
+                        const SizedBox(height: 16),
+                        _TurnOwnershipCard(
+                          turn: data.turn,
+                          currentUserId: currentUserId,
+                          members: members,
+                          requests: data.requests,
+                        ),
                         if (schedule != null) ...[
                           const SizedBox(height: 16),
                           _UpcomingCard(
@@ -460,6 +470,158 @@ class _ActionCardState extends ConsumerState<_ActionCard> {
                   ],
                 ],
               ),
+      ),
+    );
+  }
+}
+
+/// Turn ownership actions, independent of the turn's physical status (start/
+/// claim/finish above) — giving, requesting, and responding to requests are
+/// about who a turn belongs to, not whether it's currently being used, so
+/// this renders as its own card rather than folding into _ActionCard's
+/// single-message-or-single-action-group layout.
+class _TurnOwnershipCard extends ConsumerStatefulWidget {
+  final Turn turn;
+  final String? currentUserId;
+  final List<HouseholdMemberProfile> members;
+  final List<TurnRequest> requests;
+
+  const _TurnOwnershipCard({
+    required this.turn,
+    required this.currentUserId,
+    required this.members,
+    required this.requests,
+  });
+
+  @override
+  ConsumerState<_TurnOwnershipCard> createState() => _TurnOwnershipCardState();
+}
+
+class _TurnOwnershipCardState extends ConsumerState<_TurnOwnershipCard> {
+  bool _busy = false;
+
+  Future<void> _run(Future<String?> Function() action) async {
+    setState(() => _busy = true);
+    final error = await action();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
+  Future<void> _giveTurn() async {
+    final otherMembers = widget.members.where((m) => m.id != widget.currentUserId).toList();
+    if (otherMembers.isEmpty) return;
+
+    final selectedUserId = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Give turn to…', style: Theme.of(context).textTheme.titleMedium),
+            ),
+            for (final member in otherMembers)
+              ListTile(
+                leading: MemberAvatar(name: member.name, radius: 16),
+                title: Text(member.name),
+                onTap: () => Navigator.of(context).pop(member.id),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (selectedUserId == null || !mounted) return;
+    await _run(() => ref.read(homeProvider.notifier).transfer(selectedUserId));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final turn = widget.turn;
+    final userId = widget.currentUserId;
+    final theme = Theme.of(context);
+
+    if (userId == null || _isTerminal(turn.status)) return const SizedBox.shrink();
+
+    final isOwner = turn.scheduledUserId == userId;
+    final pending = widget.requests.where((r) => r.isPending).toList();
+    final incoming = isOwner ? pending : const <TurnRequest>[];
+    final mine = pending.where((r) => r.requesterId == userId).toList();
+    final myRequest = mine.isEmpty ? null : mine.first;
+
+    final sections = <Widget>[];
+
+    if (isOwner) {
+      sections.add(
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _giveTurn,
+          icon: const Icon(Icons.card_giftcard_outlined),
+          label: const Text('Give Turn'),
+        ),
+      );
+    } else if (myRequest != null) {
+      sections.add(
+        Row(
+          children: [
+            Icon(Icons.hourglass_top, size: 18, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 10),
+            const Expanded(child: Text('Your request for this turn is pending.')),
+            TextButton(
+              onPressed: _busy ? null : () => _run(() => ref.read(homeProvider.notifier).cancelRequest(myRequest.id)),
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      sections.add(
+        OutlinedButton.icon(
+          onPressed: _busy ? null : () => _run(() => ref.read(homeProvider.notifier).requestTurn()),
+          icon: const Icon(Icons.pan_tool_outlined),
+          label: const Text('Request This Turn'),
+        ),
+      );
+    }
+
+    if (incoming.isNotEmpty) {
+      if (sections.isNotEmpty) sections.add(const SizedBox(height: 14));
+      sections.add(Text('Incoming requests', style: theme.textTheme.labelLarge));
+      sections.add(const SizedBox(height: 6));
+      for (final req in incoming) {
+        final name = _nameFor(req.requesterId, widget.members, userId);
+        sections.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                MemberAvatar(name: name, radius: 16),
+                const SizedBox(width: 10),
+                Expanded(child: Text('$name wants this turn')),
+                IconButton(
+                  tooltip: 'Accept',
+                  icon: const Icon(Icons.check_circle_outline, color: Colors.green),
+                  onPressed: _busy ? null : () => _run(() => ref.read(homeProvider.notifier).acceptRequest(req.id)),
+                ),
+                IconButton(
+                  tooltip: 'Reject',
+                  icon: const Icon(Icons.cancel_outlined),
+                  onPressed: _busy ? null : () => _run(() => ref.read(homeProvider.notifier).rejectRequest(req.id)),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: sections),
       ),
     );
   }

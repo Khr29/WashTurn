@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const Household = require('../models/Household');
 const Schedule = require('../models/Schedule');
 const Turn = require('../models/Turn');
+const { OPEN_TURN_STATUSES } = require('../models/Turn');
 const turnService = require('../services/turn.service');
 const notificationService = require('../services/notification.service');
 const { getHouseholdDateParts, getHouseholdHour } = require('../utils/dateHelpers');
@@ -47,7 +48,14 @@ async function sendReminders(household, todayDateString, dayOfWeek) {
   const schedule = await Schedule.findOne({ householdId: household._id });
   if (!schedule) return;
 
-  const todayTurn = await Turn.findOne({ householdId: household._id, date: todayDateString });
+  // With multiple turns per day now possible, "today's turn" means whichever
+  // one is still open — a household can have earlier completed turns on the
+  // same date, and .findOne would not otherwise guarantee picking the live one.
+  const todayTurn = await Turn.findOne({
+    householdId: household._id,
+    date: todayDateString,
+    status: { $in: OPEN_TURN_STATUSES },
+  }).sort({ createdAt: -1 });
   if (todayTurn && todayTurn.status === 'PENDING') {
     await notificationService.notifyTurnReminder(todayTurn, 'today');
   }

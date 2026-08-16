@@ -7,6 +7,7 @@ const notificationPreferencesSchema = new mongoose.Schema(
     machineStarted: { type: Boolean, default: true },
     machineFinished: { type: Boolean, default: true },
     emergencyActivity: { type: Boolean, default: true },
+    turnRequests: { type: Boolean, default: true },
   },
   { _id: false }
 );
