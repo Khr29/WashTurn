@@ -53,7 +53,7 @@ class _RootGateState extends ConsumerState<_RootGate> {
     _fcmInitialized = true;
     // Push notifications require Firebase to be configured for this project
     // (see app/README) — failures here shouldn't block the rest of the app.
-    FcmService(ref).init().catchError((_) {});
+    ref.read(fcmServiceProvider).init().catchError((_) {});
   }
 }
 

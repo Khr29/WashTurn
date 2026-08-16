@@ -17,6 +17,8 @@ import '../../core/state/providers.dart';
 /// Every WashTurn notification is about "what's happening with the machine
 /// right now," so tapping any of them just brings the user to Home — no
 /// per-category routing table needed.
+final fcmServiceProvider = Provider<FcmService>((ref) => FcmService(ref));
+
 class FcmService {
   final Ref ref;
   FcmService(this.ref);
