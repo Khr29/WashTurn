@@ -11,7 +11,11 @@ function authenticate(req, res, next) {
   }
 
   try {
-    const payload = jwt.verify(token, jwtSecret);
+    // Pinning the algorithm defends against algorithm-confusion attacks
+    // (e.g. an attacker crafting an "alg": "none" or RS256-signed token to
+    // bypass HMAC verification) — jwt.verify without this option will accept
+    // any algorithm the library supports, not just the one this API issues.
+    const payload = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] });
     req.user = { id: payload.sub };
     next();
   } catch (err) {

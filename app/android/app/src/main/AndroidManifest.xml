@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for all build variants: the app talks to the WashTurn API and
+         Firebase Cloud Messaging over the network. Debug/profile previously
+         declared this themselves (for the Flutter tool's own use), but release
+         had no source declaring it at all — firebase-messaging's own manifest
+         doesn't include it either — so a release build would have shipped
+         with no network access whatsoever. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="washturn"
         android:name="${applicationName}"

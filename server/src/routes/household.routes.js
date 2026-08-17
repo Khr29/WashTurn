@@ -6,13 +6,14 @@ const activityController = require('../controllers/activity.controller');
 const { authenticate } = require('../middleware/authenticate');
 const { requireHouseholdMember } = require('../middleware/requireHouseholdMember');
 const { requireHouseholdOwner } = require('../middleware/requireHouseholdOwner');
+const { joinHouseholdLimiter } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
 router.use(authenticate);
 
 router.post('/', householdController.create);
-router.post('/join', householdController.join);
+router.post('/join', joinHouseholdLimiter, householdController.join);
 
 router.get('/:id', requireHouseholdMember('id'), householdController.getOne);
 router.get('/:id/members', requireHouseholdMember('id'), householdController.getMembers);

@@ -7,7 +7,7 @@ const { ApiError } = require('../utils/ApiError');
 const SALT_ROUNDS = 10;
 
 function issueToken(user) {
-  return jwt.sign({}, jwtSecret, { subject: user._id.toString(), expiresIn: jwtExpiresIn });
+  return jwt.sign({}, jwtSecret, { subject: user._id.toString(), expiresIn: jwtExpiresIn, algorithm: 'HS256' });
 }
 
 function toPublicUser(user) {

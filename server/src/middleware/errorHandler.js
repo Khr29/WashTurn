@@ -1,4 +1,5 @@
 const { ApiError } = require('../utils/ApiError');
+const { nodeEnv } = require('../config/env');
 
 function notFoundHandler(req, res, next) {
   next(new ApiError(404, `Route not found: ${req.method} ${req.originalUrl}`));
@@ -20,7 +21,15 @@ function errorHandler(err, req, res, next) {
   if (statusCode >= 500) {
     console.error(err);
   }
-  res.status(statusCode).json({ error: err.message || 'Internal server error' });
+
+  // Below 500, err.message is always an ApiError message a developer wrote
+  // for this exact response — safe to show. At/above 500, err is an
+  // unexpected failure (a driver error, a bug, etc.) whose message can
+  // contain internals (stack fragments, connection strings, file paths) —
+  // outside of dev/test, collapse it to a generic message instead.
+  const message =
+    statusCode < 500 || nodeEnv !== 'production' ? err.message || 'Internal server error' : 'Internal server error';
+  res.status(statusCode).json({ error: message });
 }
 
 module.exports = { notFoundHandler, errorHandler };

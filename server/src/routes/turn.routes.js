@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/authenticate');
 const { requireHouseholdMember } = require('../middleware/requireHouseholdMember');
 const turnService = require('../services/turn.service');
 const { ApiError } = require('../utils/ApiError');
+const { requestCreationLimiter } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
@@ -24,7 +25,12 @@ router.post('/:id/finish', requireHouseholdMember(resolveHouseholdIdFromTurn), t
 
 router.post('/:id/transfer', requireHouseholdMember(resolveHouseholdIdFromTurn), turnController.transfer);
 router.get('/:id/requests', requireHouseholdMember(resolveHouseholdIdFromTurn), turnController.listRequests);
-router.post('/:id/requests', requireHouseholdMember(resolveHouseholdIdFromTurn), turnController.createRequest);
+router.post(
+  '/:id/requests',
+  requestCreationLimiter,
+  requireHouseholdMember(resolveHouseholdIdFromTurn),
+  turnController.createRequest
+);
 router.post(
   '/:id/requests/:requestId/accept',
   requireHouseholdMember(resolveHouseholdIdFromTurn),

@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/authenticate');
 const { requireHouseholdMember } = require('../middleware/requireHouseholdMember');
 const dryingService = require('../services/drying.service');
 const { ApiError } = require('../utils/ApiError');
+const { requestCreationLimiter } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
@@ -23,7 +24,7 @@ const resolveFromDryingRequest = async (req) => {
 
 router.get('/balances', requireHouseholdMember(resolveFromQuery), dryingController.balances);
 router.get('/', requireHouseholdMember(resolveFromQuery), dryingController.list);
-router.post('/', requireHouseholdMember(resolveFromBody), dryingController.create);
+router.post('/', requestCreationLimiter, requireHouseholdMember(resolveFromBody), dryingController.create);
 
 router.post('/:id/accept', requireHouseholdMember(resolveFromDryingRequest), dryingController.accept);
 router.post('/:id/reject', requireHouseholdMember(resolveFromDryingRequest), dryingController.reject);
