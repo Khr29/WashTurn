@@ -49,6 +49,8 @@ class NotificationPreferencesNotifier extends StateNotifier<AsyncValue<Notificat
         return prefs.copyWith(emergencyActivity: value);
       case 'turnRequests':
         return prefs.copyWith(turnRequests: value);
+      case 'dryingRequests':
+        return prefs.copyWith(dryingRequests: value);
       default:
         return prefs;
     }

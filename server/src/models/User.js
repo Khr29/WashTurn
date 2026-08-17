@@ -8,6 +8,7 @@ const notificationPreferencesSchema = new mongoose.Schema(
     machineFinished: { type: Boolean, default: true },
     emergencyActivity: { type: Boolean, default: true },
     turnRequests: { type: Boolean, default: true },
+    dryingRequests: { type: Boolean, default: true },
   },
   { _id: false }
 );

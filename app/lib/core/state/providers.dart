@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
 import '../api/auth_repository.dart';
+import '../api/drying_repository.dart';
 import '../api/household_repository.dart';
 import '../api/household_store.dart';
 import '../api/notification_repository.dart';
@@ -19,3 +20,4 @@ final householdRepositoryProvider =
 final turnRepositoryProvider = Provider((ref) => TurnRepository(ref.watch(apiClientProvider)));
 final notificationRepositoryProvider =
     Provider((ref) => NotificationRepository(ref.watch(apiClientProvider)));
+final dryingRepositoryProvider = Provider((ref) => DryingRepository(ref.watch(apiClientProvider)));

@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/models/drying_request.dart';
 import '../../../core/models/household.dart';
 import '../../../core/models/schedule.dart';
 import '../../../core/models/turn.dart';
 import '../../../core/models/turn_request.dart';
 import '../../../core/state/auth_state.dart';
+import '../../../core/state/drying_state.dart';
 import '../../../core/state/home_state.dart';
 import '../../../core/state/household_state.dart';
 import '../../../core/utils/schedule_utils.dart';
@@ -42,6 +44,7 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final homeState = ref.watch(homeProvider);
+    final dryingState = ref.watch(dryingProvider);
     final membersAsync = ref.watch(membersProvider);
     final scheduleAsync = ref.watch(scheduleProvider);
     final authState = ref.watch(authStateProvider);
@@ -51,7 +54,10 @@ class HomeScreen extends ConsumerWidget {
     return Scaffold(
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: () => ref.read(homeProvider.notifier).refresh(),
+          onRefresh: () => Future.wait([
+            ref.read(homeProvider.notifier).refresh(),
+            ref.read(dryingProvider.notifier).refresh(),
+          ]),
           child: ListView(
             children: [
               _HomeHeader(name: currentUserName),
@@ -63,9 +69,7 @@ class HomeScreen extends ConsumerWidget {
                   builder: (context, data) {
                     final members = membersAsync.value ?? const <HouseholdMemberProfile>[];
                     final schedule = scheduleAsync.value;
-                    final todayEntry = schedule != null
-                        ? schedule.forDay(dayOfWeekFromDateString(data.turn.date))
-                        : null;
+                    final todayEntry = schedule?.forDay(dayOfWeekFromDateString(data.turn.date));
 
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -88,6 +92,27 @@ class HomeScreen extends ConsumerWidget {
                           members: members,
                           requests: data.requests,
                         ),
+                        const SizedBox(height: 20),
+                        const SectionHeader(title: 'Drying'),
+                        AsyncView(
+                          value: dryingState,
+                          onRetry: () => ref.read(dryingProvider.notifier).refresh(),
+                          builder: (context, drying) => _DryingCard(
+                            data: drying,
+                            turnId: data.turn.id,
+                            currentUserId: currentUserId,
+                            members: members,
+                          ),
+                        ),
+                        if (dryingState.value != null && dryingState.value!.balances.isNotEmpty) ...[
+                          const SizedBox(height: 20),
+                          const SectionHeader(title: 'Drying favors'),
+                          _DryingFavorsCard(
+                            balances: dryingState.value!.balances,
+                            members: members,
+                            currentUserId: currentUserId,
+                          ),
+                        ],
                         if (schedule != null) ...[
                           const SizedBox(height: 16),
                           _UpcomingCard(
@@ -622,6 +647,211 @@ class _TurnOwnershipCardState extends ConsumerState<_TurnOwnershipCard> {
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: sections),
+      ),
+    );
+  }
+}
+
+/// Requesting/accepting/completing drying help — deliberately independent of
+/// the turn/machine cards above, since drying is a separate responsibility
+/// from the wash cycle (see the backend's drying.service.js) and must keep
+/// working no matter what today's turn/machine status is.
+class _DryingCard extends ConsumerStatefulWidget {
+  final DryingData data;
+  final String turnId;
+  final String? currentUserId;
+  final List<HouseholdMemberProfile> members;
+
+  const _DryingCard({
+    required this.data,
+    required this.turnId,
+    required this.currentUserId,
+    required this.members,
+  });
+
+  @override
+  ConsumerState<_DryingCard> createState() => _DryingCardState();
+}
+
+class _DryingCardState extends ConsumerState<_DryingCard> {
+  bool _busy = false;
+
+  Future<void> _run(Future<String?> Function() action) async {
+    setState(() => _busy = true);
+    final error = await action();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
+  Future<void> _askSomeone() async {
+    final otherMembers = widget.members.where((m) => m.id != widget.currentUserId).toList();
+    if (otherMembers.isEmpty) return;
+
+    final selectedUserId = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Ask someone to dry your clothes…', style: Theme.of(context).textTheme.titleMedium),
+            ),
+            for (final member in otherMembers)
+              ListTile(
+                leading: MemberAvatar(name: member.name, radius: 16),
+                title: Text(member.name),
+                onTap: () => Navigator.of(context).pop(member.id),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (selectedUserId == null || !mounted) return;
+    final helperName = otherMembers.firstWhere((m) => m.id == selectedUserId).name;
+    final confirmed = await showConfirmSheet(
+      context,
+      title: 'Ask $helperName to dry your clothes?',
+      message: "They'll be asked to accept, and you'll owe them a drying favor once they mark it done.",
+      confirmLabel: 'Ask $helperName',
+    );
+    if (!confirmed || !mounted) return;
+
+    await _run(() => ref.read(dryingProvider.notifier).requestDrying(selectedUserId, turnId: widget.turnId));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final userId = widget.currentUserId;
+    final data = widget.data;
+
+    final sections = <Widget>[];
+
+    for (final req in data.outgoing) {
+      final name = _nameFor(req.helperId, widget.members, userId);
+      sections.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              MemberAvatar(name: name, radius: 16),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  req.isAccepted ? '$name is drying your clothes' : 'Waiting for $name',
+                ),
+              ),
+              if (req.isPending)
+                TextButton(
+                  onPressed: _busy ? null : () => _run(() => ref.read(dryingProvider.notifier).cancel(req.id)),
+                  child: const Text('Cancel'),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    for (final req in data.incoming) {
+      final name = _nameFor(req.requesterId, widget.members, userId);
+      sections.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              MemberAvatar(name: name, radius: 16),
+              const SizedBox(width: 10),
+              Expanded(child: Text('$name needs help drying their clothes')),
+              IconButton(
+                tooltip: 'Accept',
+                icon: const Icon(Icons.check_circle_outline, color: Colors.green),
+                onPressed: _busy ? null : () => _run(() => ref.read(dryingProvider.notifier).accept(req.id)),
+              ),
+              IconButton(
+                tooltip: 'Reject',
+                icon: const Icon(Icons.cancel_outlined),
+                onPressed: _busy ? null : () => _run(() => ref.read(dryingProvider.notifier).reject(req.id)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    for (final req in data.tasks) {
+      final name = _nameFor(req.requesterId, widget.members, userId);
+      sections.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              MemberAvatar(name: name, radius: 16),
+              const SizedBox(width: 10),
+              Expanded(child: Text("Dry $name's clothes")),
+              FilledButton.tonal(
+                onPressed: _busy ? null : () => _run(() => ref.read(dryingProvider.notifier).complete(req.id)),
+                child: const Text('Mark as Dried'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (sections.isNotEmpty) sections.add(const SizedBox(height: 6));
+    sections.add(
+      OutlinedButton.icon(
+        onPressed: _busy ? null : _askSomeone,
+        icon: const Icon(Icons.wb_sunny_outlined),
+        label: const Text('Ask Someone to Dry'),
+      ),
+    );
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: sections),
+      ),
+    );
+  }
+}
+
+class _DryingFavorsCard extends StatelessWidget {
+  final List<DryingFavorBalance> balances;
+  final List<HouseholdMemberProfile> members;
+  final String? currentUserId;
+
+  const _DryingFavorsCard({required this.balances, required this.members, required this.currentUserId});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          children: [
+            for (final balance in balances)
+              ListTile(
+                leading: MemberAvatar(name: _nameFor(balance.userId, members, currentUserId), radius: 18),
+                title: Text(_nameFor(balance.userId, members, currentUserId)),
+                subtitle: Text(
+                  balance.youOwe > 0
+                      ? 'You owe ${balance.youOwe} drying favor${balance.youOwe == 1 ? '' : 's'}'
+                      : 'Owes you ${balance.owesYou} drying favor${balance.owesYou == 1 ? '' : 's'}',
+                  style: TextStyle(
+                    color: balance.youOwe > 0 ? theme.colorScheme.error : Colors.green,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

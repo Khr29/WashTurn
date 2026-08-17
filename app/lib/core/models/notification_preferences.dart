@@ -5,6 +5,7 @@ class NotificationPreferences {
   final bool machineFinished;
   final bool emergencyActivity;
   final bool turnRequests;
+  final bool dryingRequests;
 
   const NotificationPreferences({
     required this.turnToday,
@@ -13,6 +14,7 @@ class NotificationPreferences {
     required this.machineFinished,
     required this.emergencyActivity,
     required this.turnRequests,
+    required this.dryingRequests,
   });
 
   factory NotificationPreferences.fromJson(Map<String, dynamic> json) => NotificationPreferences(
@@ -22,6 +24,7 @@ class NotificationPreferences {
         machineFinished: json['machineFinished'] as bool? ?? true,
         emergencyActivity: json['emergencyActivity'] as bool? ?? true,
         turnRequests: json['turnRequests'] as bool? ?? true,
+        dryingRequests: json['dryingRequests'] as bool? ?? true,
       );
 
   NotificationPreferences copyWith({
@@ -31,6 +34,7 @@ class NotificationPreferences {
     bool? machineFinished,
     bool? emergencyActivity,
     bool? turnRequests,
+    bool? dryingRequests,
   }) =>
       NotificationPreferences(
         turnToday: turnToday ?? this.turnToday,
@@ -39,5 +43,6 @@ class NotificationPreferences {
         machineFinished: machineFinished ?? this.machineFinished,
         emergencyActivity: emergencyActivity ?? this.emergencyActivity,
         turnRequests: turnRequests ?? this.turnRequests,
+        dryingRequests: dryingRequests ?? this.dryingRequests,
       );
 }

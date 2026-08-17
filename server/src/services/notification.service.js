@@ -32,6 +32,7 @@ const DEFAULT_PREFERENCES = {
   machineFinished: true,
   emergencyActivity: true,
   turnRequests: true,
+  dryingRequests: true,
 };
 
 // Falls back to all-enabled defaults for a user document that predates the
@@ -51,6 +52,7 @@ async function updatePreferences(userId, updates) {
     'machineFinished',
     'emergencyActivity',
     'turnRequests',
+    'dryingRequests',
   ];
   const $set = {};
   for (const key of allowedKeys) {
@@ -209,6 +211,51 @@ async function notifyTurnReminderImpl(turn, when) {
   });
 }
 
+async function notifyDryingRequestedImpl(dryingRequest) {
+  const name = await usernameFor(dryingRequest.requesterId);
+  await sendToUsers([dryingRequest.helperId], 'dryingRequests', {
+    title: '☀️ WashTurn',
+    body: `${name} is asking you to dry their clothes.`,
+    data: { type: 'DRYING_REQUESTED', dryingRequestId: dryingRequest._id.toString() },
+  });
+}
+
+async function notifyDryingAcceptedImpl(dryingRequest) {
+  const name = await usernameFor(dryingRequest.helperId);
+  await sendToUsers([dryingRequest.requesterId], 'dryingRequests', {
+    title: '☀️ WashTurn',
+    body: `${name} accepted your drying request.`,
+    data: { type: 'DRYING_ACCEPTED', dryingRequestId: dryingRequest._id.toString() },
+  });
+}
+
+async function notifyDryingRejectedImpl(dryingRequest) {
+  const name = await usernameFor(dryingRequest.helperId);
+  await sendToUsers([dryingRequest.requesterId], 'dryingRequests', {
+    title: '☀️ WashTurn',
+    body: `${name} declined your drying request.`,
+    data: { type: 'DRYING_REJECTED', dryingRequestId: dryingRequest._id.toString() },
+  });
+}
+
+async function notifyDryingCancelledImpl(dryingRequest) {
+  const name = await usernameFor(dryingRequest.requesterId);
+  await sendToUsers([dryingRequest.helperId], 'dryingRequests', {
+    title: '☀️ WashTurn',
+    body: `${name} cancelled their drying request.`,
+    data: { type: 'DRYING_CANCELLED', dryingRequestId: dryingRequest._id.toString() },
+  });
+}
+
+async function notifyDryingCompletedImpl(dryingRequest) {
+  const name = await usernameFor(dryingRequest.helperId);
+  await sendToUsers([dryingRequest.requesterId], 'dryingRequests', {
+    title: '☀️ WashTurn',
+    body: `${name} finished drying your clothes.`,
+    data: { type: 'DRYING_COMPLETED', dryingRequestId: dryingRequest._id.toString() },
+  });
+}
+
 module.exports = {
   registerToken,
   unregisterToken,
@@ -223,4 +270,9 @@ module.exports = {
   notifyRequestAccepted: safe(notifyRequestAcceptedImpl),
   notifyRequestRejected: safe(notifyRequestRejectedImpl),
   notifyTurnTransferred: safe(notifyTurnTransferredImpl),
+  notifyDryingRequested: safe(notifyDryingRequestedImpl),
+  notifyDryingAccepted: safe(notifyDryingAcceptedImpl),
+  notifyDryingRejected: safe(notifyDryingRejectedImpl),
+  notifyDryingCancelled: safe(notifyDryingCancelledImpl),
+  notifyDryingCompleted: safe(notifyDryingCompletedImpl),
 };
