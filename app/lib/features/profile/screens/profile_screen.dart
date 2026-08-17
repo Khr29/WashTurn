@@ -20,41 +20,50 @@ class ProfileScreen extends ConsumerWidget {
     final householdAsync = ref.watch(householdProvider);
     final membersAsync = ref.watch(membersProvider);
     final currentUserId = authState is AuthAuthenticated ? authState.user.id : null;
+    final isOwner = currentUserId != null && (householdAsync.value?.isOwner(currentUserId) ?? false);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Profile')),
-      body: AsyncView(
-        value: householdAsync,
-        onRetry: () => ref.invalidate(householdProvider),
-        builder: (context, household) {
-          if (household == null) return const SizedBox.shrink();
-          final isOwner = currentUserId != null && household.isOwner(currentUserId);
-
-          return ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              if (authState is AuthAuthenticated)
-                _AccountCard(name: authState.user.name, email: authState.user.email, isOwner: isOwner),
-              const SizedBox(height: 16),
-              _InviteCard(household: household),
-              const SizedBox(height: 16),
-              _MembersCard(
-                membersAsync: membersAsync,
-                isOwner: isOwner,
-                currentUserId: currentUserId,
-                householdId: household.id,
-              ),
-              const SizedBox(height: 16),
-              const _NotificationSettingsCard(),
-              const SizedBox(height: 24),
-              OutlinedButton.icon(
-                onPressed: () => ref.read(authStateProvider.notifier).logout(),
-                icon: const Icon(Icons.logout),
-                label: const Text('Log out'),
-              ),
-            ],
-          );
-        },
+      // Deliberately not gated behind householdAsync the way the household-
+      // specific cards below are: signing out must always be reachable, even
+      // if the household fetch is failing (a stale/invalid cached household
+      // id, a network blip, anything) — otherwise a broken household lookup
+      // becomes a dead end with no way back to the login screen.
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          if (authState is AuthAuthenticated)
+            _AccountCard(name: authState.user.name, email: authState.user.email, isOwner: isOwner),
+          const SizedBox(height: 16),
+          AsyncView(
+            value: householdAsync,
+            onRetry: () => ref.invalidate(householdProvider),
+            builder: (context, household) {
+              if (household == null) return const SizedBox.shrink();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _InviteCard(household: household),
+                  const SizedBox(height: 16),
+                  _MembersCard(
+                    membersAsync: membersAsync,
+                    isOwner: isOwner,
+                    currentUserId: currentUserId,
+                    householdId: household.id,
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          const _NotificationSettingsCard(),
+          const SizedBox(height: 24),
+          OutlinedButton.icon(
+            onPressed: () => ref.read(authStateProvider.notifier).logout(),
+            icon: const Icon(Icons.logout),
+            label: const Text('Log out'),
+          ),
+        ],
       ),
     );
   }

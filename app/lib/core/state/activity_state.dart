@@ -44,12 +44,20 @@ class ActivityNotifier extends StateNotifier<AsyncValue<ActivityListState>> {
 
     state = AsyncValue.data(current.copyWith(isLoadingMore: true));
     final nextPage = _page + 1;
-    final result = await ref.read(householdRepositoryProvider).getActivity(householdId, page: nextPage);
-    _page = nextPage;
-    state = AsyncValue.data(ActivityListState(
-      entries: [...current.entries, ...result.entries],
-      hasMore: result.hasMore,
-    ));
+    try {
+      final result = await ref.read(householdRepositoryProvider).getActivity(householdId, page: nextPage);
+      _page = nextPage;
+      state = AsyncValue.data(ActivityListState(
+        entries: [...current.entries, ...result.entries],
+        hasMore: result.hasMore,
+      ));
+    } catch (_) {
+      // A pagination failure (lost connectivity, the household becoming
+      // invalid mid-session, etc.) shouldn't crash the screen — fall back to
+      // the list as it was, with isLoadingMore cleared, so scrolling or a
+      // pull-to-refresh can retry instead of the app dying mid-scroll.
+      state = AsyncValue.data(current.copyWith(isLoadingMore: false));
+    }
   }
 }
 

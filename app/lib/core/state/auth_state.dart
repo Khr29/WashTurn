@@ -39,8 +39,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final user = await ref.read(authRepositoryProvider).me();
       state = AuthAuthenticated(user);
     } on ApiException {
-      // Token is invalid/expired server-side — discard it and require login again.
+      // Token is invalid/expired server-side — discard it and require login
+      // again. The cached household id goes with it: it's meaningless
+      // without a session that can prove which account it belongs to, and
+      // leaving it behind would let it get silently inherited by whichever
+      // account logs in next on this device.
       await ref.read(tokenStoreProvider).clear();
+      await ref.read(householdStoreProvider).clear();
       state = const AuthUnauthenticated();
     } catch (_) {
       // Network failure etc.: keep the token (it may still be valid) and let
