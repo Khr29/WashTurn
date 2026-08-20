@@ -36,6 +36,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final authState = ref.watch(authStateProvider);
     final isLoading = authState is AuthLoading;
     final error = authState is AuthUnauthenticated ? authState.error : null;
+    final theme = Theme.of(context);
 
     return Scaffold(
       body: SafeArea(
@@ -47,9 +48,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const SizedBox(height: 32),
-                  Text('🧺 WashTurn', style: Theme.of(context).textTheme.headlineMedium),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 40),
+                  Center(
+                    child: Container(
+                      width: 88,
+                      height: 88,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: const Text('🧺', style: TextStyle(fontSize: 44)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'WashTurn',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 24),
                   Text('Welcome back', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 4),
                   Text(
