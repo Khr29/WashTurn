@@ -41,7 +41,9 @@ class ScheduleScreen extends ConsumerWidget {
     final currentUserId = authState is AuthAuthenticated ? authState.user.id : null;
     // "Today" must come from the backend (household-timezone-aware), never the
     // device clock — the schedule can't be highlighted correctly otherwise.
-    final todayTurn = ref.watch(homeProvider).value?.turn;
+    // valueOrNull: homeProvider erroring with no cached data (e.g. on first
+    // load) must not crash this screen — .value would rethrow that error.
+    final todayTurn = ref.watch(homeProvider).valueOrNull?.turn;
     final todayDateString = todayTurn?.date;
     final todayDayOfWeek = todayDateString != null ? dayOfWeekFromDateString(todayDateString) : null;
 
@@ -52,8 +54,11 @@ class ScheduleScreen extends ConsumerWidget {
         onRetry: () => ref.invalidate(scheduleProvider),
         builder: (context, schedule) {
           if (schedule == null) return const SizedBox.shrink();
-          final household = householdAsync.value;
-          final members = membersAsync.value ?? const <HouseholdMemberProfile>[];
+          // valueOrNull: householdAsync/membersAsync are independent of
+          // scheduleAsync (already confirmed to have data above) and could
+          // still be in an errored, valueless state on their own.
+          final household = householdAsync.valueOrNull;
+          final members = membersAsync.valueOrNull ?? const <HouseholdMemberProfile>[];
           final isOwner = household != null && currentUserId != null && household.isOwner(currentUserId);
 
           return RefreshIndicator(

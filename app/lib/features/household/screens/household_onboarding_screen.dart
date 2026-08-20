@@ -25,6 +25,12 @@ class _HouseholdOnboardingScreenState extends ConsumerState<HouseholdOnboardingS
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    // Otherwise an error from one tab (e.g. "Invalid invite code" on Join)
+    // stays on screen after switching to the other tab (Create), where it's
+    // both stale and about the wrong form.
+    _tabController.addListener(() {
+      if (_error != null) setState(() => _error = null);
+    });
   }
 
   @override

@@ -108,8 +108,11 @@ class HomeScreen extends ConsumerWidget {
                   value: homeState,
                   onRetry: () => ref.read(homeProvider.notifier).refresh(),
                   builder: (context, data) {
-                    final members = membersAsync.value ?? const <HouseholdMemberProfile>[];
-                    final schedule = scheduleAsync.value;
+                    // valueOrNull: membersAsync/scheduleAsync are independent
+                    // of homeState (already confirmed to have data above)
+                    // and could still be in an errored, valueless state.
+                    final members = membersAsync.valueOrNull ?? const <HouseholdMemberProfile>[];
+                    final schedule = scheduleAsync.valueOrNull;
                     final todayEntry = schedule?.forDay(dayOfWeekFromDateString(data.turn.date));
 
                     return Column(
@@ -145,11 +148,11 @@ class HomeScreen extends ConsumerWidget {
                             members: members,
                           ),
                         ),
-                        if (dryingState.value != null && dryingState.value!.balances.isNotEmpty) ...[
+                        if (dryingState.valueOrNull != null && dryingState.valueOrNull!.balances.isNotEmpty) ...[
                           const SizedBox(height: 20),
                           const SectionHeader(title: 'Drying favors'),
                           _DryingFavorsCard(
-                            balances: dryingState.value!.balances,
+                            balances: dryingState.valueOrNull!.balances,
                             members: members,
                             currentUserId: currentUserId,
                           ),
@@ -259,7 +262,14 @@ class _StatusCard extends StatelessWidget {
       TurnStatus.expired => ('🧺', 'NOT USED TODAY', theme.colorScheme.onSurfaceVariant),
     };
 
+    // Tinted with the status color rather than the flat default card color —
+    // this is the single most important thing on the screen (what the
+    // machine is doing right now), so it should read as the hero card at a
+    // glance instead of blending into the cards below it.
+    final tintedBackground = Color.alphaBlend(color.withValues(alpha: 0.14), theme.colorScheme.surface);
+
     return Card(
+      color: tintedBackground,
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: AnimatedSwitcher(

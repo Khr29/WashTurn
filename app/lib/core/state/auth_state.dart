@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/notifications/fcm_service.dart';
 import '../api/api_exception.dart';
 import '../models/user.dart';
+import 'household_state.dart';
 import 'providers.dart';
 
 sealed class AuthState {
@@ -43,9 +44,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // again. The cached household id goes with it: it's meaningless
       // without a session that can prove which account it belongs to, and
       // leaving it behind would let it get silently inherited by whichever
-      // account logs in next on this device.
+      // account logs in next on this device. Going through the notifier
+      // (rather than clearing householdStoreProvider directly) also resets
+      // householdIdProvider's in-memory state — without that, a second
+      // account signing in later in the same app session would still see
+      // this account's household, even though the on-disk copy was cleared.
       await ref.read(tokenStoreProvider).clear();
-      await ref.read(householdStoreProvider).clear();
+      await ref.read(householdIdProvider.notifier).clear();
       state = const AuthUnauthenticated();
     } catch (_) {
       // Network failure etc.: keep the token (it may still be valid) and let
@@ -89,7 +94,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<void> sessionExpired() async {
     if (state is! AuthAuthenticated) return;
     await ref.read(tokenStoreProvider).clear();
-    await ref.read(householdStoreProvider).clear();
+    // Via the notifier, not householdStoreProvider directly, so the in-memory
+    // householdIdProvider state is reset too (see the note in
+    // _restoreSession's catch block above).
+    await ref.read(householdIdProvider.notifier).clear();
     state = const AuthUnauthenticated(error: 'Your session has expired. Please log in again.');
   }
 
@@ -112,7 +120,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // token below is sufficient to end the session on-device.
     }
     await ref.read(tokenStoreProvider).clear();
-    await ref.read(householdStoreProvider).clear();
+    // Via the notifier, not householdStoreProvider directly — see the note in
+    // _restoreSession's catch block above.
+    await ref.read(householdIdProvider.notifier).clear();
     state = const AuthUnauthenticated();
   }
 }

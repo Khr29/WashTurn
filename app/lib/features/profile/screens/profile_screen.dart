@@ -22,7 +22,10 @@ class ProfileScreen extends ConsumerWidget {
     final householdAsync = ref.watch(householdProvider);
     final membersAsync = ref.watch(membersProvider);
     final currentUserId = authState is AuthAuthenticated ? authState.user.id : null;
-    final isOwner = currentUserId != null && (householdAsync.value?.isOwner(currentUserId) ?? false);
+    // valueOrNull, not value: an errored householdAsync with no cached data
+    // (e.g. a household fetch failure) must not crash this screen — signing
+    // out below must always stay reachable, per the AsyncView comment below.
+    final isOwner = currentUserId != null && (householdAsync.valueOrNull?.isOwner(currentUserId) ?? false);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Profile')),
