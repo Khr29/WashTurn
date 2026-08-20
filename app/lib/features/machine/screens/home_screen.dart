@@ -11,6 +11,7 @@ import '../../../core/state/auth_state.dart';
 import '../../../core/state/drying_state.dart';
 import '../../../core/state/home_state.dart';
 import '../../../core/state/household_state.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/schedule_utils.dart';
 import '../../../shared/widgets/async_view.dart';
 import '../../../shared/widgets/confirm_sheet.dart';
@@ -251,14 +252,15 @@ class _StatusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isEmergency = turn.isEmergency;
+    final isDark = theme.brightness == Brightness.dark;
+    final successColor = isDark ? AppTheme.successDark : AppTheme.success;
 
     final (emoji, label, color) = switch (turn.status) {
       TurnStatus.pending => ('🧺', 'MACHINE AVAILABLE', theme.colorScheme.primary),
-      TurnStatus.released => ('🚨', 'TURN RELEASED', Colors.orange),
-      TurnStatus.claimed => ('🚨', 'EMERGENCY CLAIMED', Colors.orange),
-      TurnStatus.inUse =>
-        isEmergency ? ('🚨', 'EMERGENCY USE', Colors.deepOrange) : ('🧺', 'MACHINE IN USE', Colors.redAccent),
-      TurnStatus.completed => ('✓', 'COMPLETED', Colors.green),
+      TurnStatus.released => ('🚨', 'TURN RELEASED', AppTheme.warning),
+      TurnStatus.claimed => ('🚨', 'EMERGENCY CLAIMED', AppTheme.warning),
+      TurnStatus.inUse => isEmergency ? ('🚨', 'EMERGENCY USE', AppTheme.urgent) : ('🧺', 'MACHINE IN USE', AppTheme.urgent),
+      TurnStatus.completed => ('✓', 'COMPLETED', successColor),
       TurnStatus.expired => ('🧺', 'NOT USED TODAY', theme.colorScheme.onSurfaceVariant),
     };
 
@@ -661,7 +663,10 @@ class _TurnOwnershipCardState extends ConsumerState<_TurnOwnershipCard> {
                 Expanded(child: Text('$name wants this turn')),
                 IconButton(
                   tooltip: 'Accept',
-                  icon: const Icon(Icons.check_circle_outline, color: Colors.green),
+                  icon: Icon(
+                    Icons.check_circle_outline,
+                    color: theme.brightness == Brightness.dark ? AppTheme.successDark : AppTheme.success,
+                  ),
                   onPressed: _busy ? null : () => _run(() => ref.read(homeProvider.notifier).acceptRequest(req.id)),
                 ),
                 IconButton(
@@ -743,6 +748,8 @@ class _DryingCardState extends ConsumerState<_DryingCard> {
   Widget build(BuildContext context) {
     final userId = widget.currentUserId;
     final data = widget.data;
+    final successColor =
+        Theme.of(context).brightness == Brightness.dark ? AppTheme.successDark : AppTheme.success;
 
     final sections = <Widget>[];
 

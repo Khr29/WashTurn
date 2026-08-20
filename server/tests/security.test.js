@@ -35,6 +35,22 @@ async function getTodayTurn(token, householdId) {
   return res.body.turn;
 }
 
+function requestTurn(token, turnId) {
+  return request(app).post(`/api/turns/${turnId}/requests`).set('Authorization', `Bearer ${token}`);
+}
+
+function acceptRequest(token, turnId, requestId) {
+  return request(app)
+    .post(`/api/turns/${turnId}/requests/${requestId}/accept`)
+    .set('Authorization', `Bearer ${token}`);
+}
+
+function removeMember(token, householdId, memberUserId) {
+  return request(app)
+    .patch(`/api/households/${householdId}/members/${memberUserId}`)
+    .set('Authorization', `Bearer ${token}`);
+}
+
 beforeAll(async () => {
   await mongoose.connect(process.env.MONGO_URI);
 });
@@ -209,6 +225,143 @@ describe('I/J: actingUserId and scheduledUserId cannot be smuggled through the r
     expect(stillPending.status).toBe('PENDING');
     expect(stillPending.actingUserId).toBeNull();
     expect(stillPending.startedAt).toBeNull();
+  });
+});
+
+describe('removed-member authorization: a stale request cannot regain access', () => {
+  test('accepting a request from a since-removed member is rejected, and ownership is unchanged', async () => {
+    const owner = await registerUser(`stale-owner-${Date.now()}@test.com`);
+    const requester = await registerUser(`stale-requester-${Date.now()}@test.com`);
+    const household = await createHousehold(owner.token);
+    await joinHousehold(requester.token, household.inviteCode);
+
+    const turn = await getTodayTurn(owner.token, household._id);
+    const reqRes = await requestTurn(requester.token, turn._id).expect(201);
+
+    await removeMember(owner.token, household._id, requester.id).expect(200);
+
+    const acceptRes = await acceptRequest(owner.token, turn._id, reqRes.body.request._id);
+    expect(acceptRes.status).toBe(409);
+
+    const stillOwner = await getTodayTurn(owner.token, household._id);
+    expect(stillOwner.scheduledUserId).toBe(owner.id);
+  });
+
+  test('removing a member cancels their pending turn requests', async () => {
+    const owner = await registerUser(`cancel-owner-${Date.now()}@test.com`);
+    const requester = await registerUser(`cancel-requester-${Date.now()}@test.com`);
+    const household = await createHousehold(owner.token);
+    await joinHousehold(requester.token, household.inviteCode);
+
+    const turn = await getTodayTurn(owner.token, household._id);
+    const reqRes = await requestTurn(requester.token, turn._id).expect(201);
+
+    await removeMember(owner.token, household._id, requester.id).expect(200);
+
+    const listRes = await request(app)
+      .get(`/api/turns/${turn._id}/requests`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(200);
+    const cancelled = listRes.body.requests.find((r) => r._id === reqRes.body.request._id);
+    expect(cancelled.status).toBe('CANCELLED');
+  });
+});
+
+describe('household member removal: ownership and state guards', () => {
+  test('only the household owner can remove a member', async () => {
+    const owner = await registerUser(`rm-owner-${Date.now()}@test.com`);
+    const memberA = await registerUser(`rm-a-${Date.now()}@test.com`);
+    const memberB = await registerUser(`rm-b-${Date.now()}@test.com`);
+    const household = await createHousehold(owner.token);
+    await joinHousehold(memberA.token, household.inviteCode);
+    await joinHousehold(memberB.token, household.inviteCode);
+
+    await removeMember(memberA.token, household._id, memberB.id).expect(403);
+  });
+
+  test('the household owner cannot be removed', async () => {
+    const owner = await registerUser(`rm-self-owner-${Date.now()}@test.com`);
+    const household = await createHousehold(owner.token);
+
+    await removeMember(owner.token, household._id, owner.id).expect(400);
+  });
+
+  test('a member with an active machine turn cannot be removed', async () => {
+    const owner = await registerUser(`rm-active-owner-${Date.now()}@test.com`);
+    const member = await registerUser(`rm-active-member-${Date.now()}@test.com`);
+    const household = await createHousehold(owner.token);
+    await joinHousehold(member.token, household.inviteCode);
+
+    const turn = await getTodayTurn(owner.token, household._id);
+    await request(app)
+      .post(`/api/turns/${turn._id}/transfer`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ toUserId: member.id })
+      .expect(200);
+    await request(app)
+      .post(`/api/turns/${turn._id}/start`)
+      .set('Authorization', `Bearer ${member.token}`)
+      .send({ estimatedDurationMinutes: 30 })
+      .expect(200);
+
+    await removeMember(owner.token, household._id, member.id).expect(409);
+  });
+
+  test('a removed member loses access and no longer appears in the members list', async () => {
+    const owner = await registerUser(`rm-gone-owner-${Date.now()}@test.com`);
+    const member = await registerUser(`rm-gone-member-${Date.now()}@test.com`);
+    const household = await createHousehold(owner.token);
+    await joinHousehold(member.token, household.inviteCode);
+
+    await removeMember(owner.token, household._id, member.id).expect(200);
+
+    const membersRes = await request(app)
+      .get(`/api/households/${household._id}/members`)
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(200);
+    expect(membersRes.body.members.some((m) => m.id === member.id)).toBe(false);
+
+    await request(app)
+      .get(`/api/households/${household._id}`)
+      .set('Authorization', `Bearer ${member.token}`)
+      .expect(403);
+  });
+});
+
+describe('input validation: malformed body types are rejected cleanly, not with a 500', () => {
+  test('registering with a non-string email returns 400', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Test', email: { $ne: null }, password: 'password123' })
+      .expect(400);
+    expect(res.body.error).not.toMatch(/typeerror|not a function/i);
+  });
+
+  test('logging in with a non-string password returns 400', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'someone@test.com', password: { $gt: '' } })
+      .expect(400);
+    expect(res.body.error).not.toMatch(/typeerror|not a function/i);
+  });
+
+  test('joining a household with a non-string invite code returns 400', async () => {
+    const user = await registerUser(`join-typeconfusion-${Date.now()}@test.com`);
+    const res = await request(app)
+      .post('/api/households/join')
+      .set('Authorization', `Bearer ${user.token}`)
+      .send({ inviteCode: 12345 })
+      .expect(400);
+    expect(res.body.error).not.toMatch(/typeerror|not a function/i);
+  });
+
+  test('creating a household with a non-string name returns 400', async () => {
+    const user = await registerUser(`create-typeconfusion-${Date.now()}@test.com`);
+    await request(app)
+      .post('/api/households')
+      .set('Authorization', `Bearer ${user.token}`)
+      .send({ name: ['not', 'a', 'string'] })
+      .expect(400);
   });
 });
 
