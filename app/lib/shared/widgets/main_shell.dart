@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/state/activity_state.dart';
 import '../../core/state/navigation_state.dart';
 import '../../features/activity/screens/activity_screen.dart';
 import '../../features/machine/screens/home_screen.dart';
@@ -20,6 +21,19 @@ class MainShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // IndexedStack builds and keeps all three tabs alive from the very first
+    // frame (that's what makes switching tabs instant, with no reload), so
+    // ActivityScreen's provider fetches exactly once — right at startup —
+    // and never again on its own. Without this, turn/drying actions taken
+    // on Home don't show up on Activity until the user happens to
+    // pull-to-refresh there themselves; the tab looks stuck on whatever was
+    // true when the app launched.
+    ref.listen<int>(mainTabIndexProvider, (previous, next) {
+      if (next == 2) {
+        ref.read(activityProvider.notifier).refresh();
+      }
+    });
+
     final index = ref.watch(mainTabIndexProvider);
     final clampedIndex = index < _screens.length ? index : 0;
 

@@ -309,13 +309,22 @@ class _StatusCard extends StatelessWidget {
       case TurnStatus.pending:
         return 'Available now.';
       case TurnStatus.released:
+        final isMe = turn.scheduledUserId == currentUserId;
         final name = _nameFor(turn.scheduledUserId, members, currentUserId);
-        return "$name doesn't need today's turn. Emergency use is available.";
+        final verb = isMe ? "don't" : "doesn't";
+        return "$name $verb need today's turn. Emergency use is available.";
       case TurnStatus.claimed:
-        return "${_nameFor(turn.actingUserId ?? '', members, currentUserId)} claimed this turn and is about to start.";
+        final actingId = turn.actingUserId ?? '';
+        final isMe = actingId == currentUserId;
+        final name = _nameFor(actingId, members, currentUserId);
+        final verb = isMe ? 'are' : 'is';
+        return '$name claimed this turn and $verb about to start.';
       case TurnStatus.inUse:
-        final name = _nameFor(turn.actingUserId ?? '', members, currentUserId);
-        return '$name is washing.${_timingDetail(turn)}';
+        final actingId = turn.actingUserId ?? '';
+        final isMe = actingId == currentUserId;
+        final name = _nameFor(actingId, members, currentUserId);
+        final verb = isMe ? 'are' : 'is';
+        return '$name $verb washing.${_timingDetail(turn)}';
       case TurnStatus.completed:
         return "Today's wash is finished. Machine available.";
       case TurnStatus.expired:
