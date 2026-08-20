@@ -59,6 +59,15 @@ async function joinHousehold({ inviteCode, userId }) {
   return household;
 }
 
+// WashTurn v1 still assumes one household per user, so this returns at most
+// one — but it's what lets the app recover a returning user's household
+// after their on-device cache is gone (logout, reinstall, new device)
+// instead of dead-ending them at onboarding, where "Join" on their own
+// invite code only 409s ("already a member") with no way back in.
+async function findMyHousehold(userId) {
+  return Household.findOne({ 'members.userId': userId });
+}
+
 async function getMembers(household) {
   const userIds = household.members.map((m) => m.userId);
   const users = await User.find({ _id: { $in: userIds } }).select('name email');
@@ -104,4 +113,4 @@ async function removeMember(household, memberUserId) {
   return household;
 }
 
-module.exports = { createHousehold, joinHousehold, getMembers, removeMember };
+module.exports = { createHousehold, joinHousehold, findMyHousehold, getMembers, removeMember };

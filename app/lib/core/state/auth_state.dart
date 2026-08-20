@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/notifications/fcm_service.dart';
@@ -66,6 +68,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final result = await ref.read(authRepositoryProvider).register(name: name, email: email, password: password);
       await ref.read(tokenStoreProvider).write(result.token);
       state = AuthAuthenticated(result.user);
+      // householdIdProvider's _load only runs once, at its own construction
+      // — it doesn't automatically re-check on a fresh login within the same
+      // app run, so without this a returning user (after an earlier logout
+      // this session) would be stuck on onboarding even though clear() left
+      // its state resolvable to null forever, not re-queried. See
+      // HouseholdIdNotifier.refresh.
+      unawaited(ref.read(householdIdProvider.notifier).refresh());
     } on ApiException catch (e) {
       state = AuthUnauthenticated(error: e.message);
     } catch (_) {
@@ -79,6 +88,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final result = await ref.read(authRepositoryProvider).login(email: email, password: password);
       await ref.read(tokenStoreProvider).write(result.token);
       state = AuthAuthenticated(result.user);
+      // See the note in register() above — same reason this is needed here.
+      unawaited(ref.read(householdIdProvider.notifier).refresh());
     } on ApiException catch (e) {
       state = AuthUnauthenticated(error: e.message);
     } catch (_) {

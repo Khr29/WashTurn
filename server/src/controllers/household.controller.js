@@ -28,6 +28,15 @@ const getOne = asyncHandler(async (req, res) => {
   res.json({ household: req.household });
 });
 
+// Not gated by requireHouseholdMember — the caller doesn't know a household
+// id to check membership against yet, that's the whole point of this route.
+// `household: null` (not a 404) is the normal, valid response for a user who
+// genuinely doesn't belong to one yet.
+const getMine = asyncHandler(async (req, res) => {
+  const household = await householdService.findMyHousehold(req.user.id);
+  res.json({ household });
+});
+
 const getMembers = asyncHandler(async (req, res) => {
   const members = await householdService.getMembers(req.household);
   res.json({ members });
@@ -38,4 +47,4 @@ const removeMember = asyncHandler(async (req, res) => {
   res.json({ household });
 });
 
-module.exports = { create, join, getOne, getMembers, removeMember };
+module.exports = { create, join, getOne, getMine, getMembers, removeMember };

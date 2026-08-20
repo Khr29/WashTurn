@@ -86,6 +86,47 @@ describe('household creation and membership', () => {
       .expect(404);
   });
 
+  test('GET /households/mine returns null for a user with no household', async () => {
+    const user = await registerUser('nohousehold@test.com');
+    const res = await request(app)
+      .get('/api/households/mine')
+      .set('Authorization', `Bearer ${user.token}`)
+      .expect(200);
+    expect(res.body.household).toBeNull();
+  });
+
+  test('GET /households/mine recovers an existing member\'s household after their local cache is lost', async () => {
+    const owner = await registerUser('mine-owner@test.com');
+    const member = await registerUser('mine-member@test.com');
+    const create = await request(app)
+      .post('/api/households')
+      .set('Authorization', `Bearer ${owner.token}`)
+      .send({ name: 'Casa Mine' });
+    const householdId = create.body.household._id;
+    const inviteCode = create.body.household.inviteCode;
+
+    await request(app)
+      .post('/api/households/join')
+      .set('Authorization', `Bearer ${member.token}`)
+      .send({ inviteCode });
+
+    // Simulates the app after a logout/login or reinstall wiped its local
+    // household-id cache: it has no id to call GET /:id with, only the
+    // account's token — /mine is what lets it recover instead of offering
+    // onboarding to someone who already has a household.
+    const ownerMine = await request(app)
+      .get('/api/households/mine')
+      .set('Authorization', `Bearer ${owner.token}`)
+      .expect(200);
+    expect(ownerMine.body.household._id).toBe(householdId);
+
+    const memberMine = await request(app)
+      .get('/api/households/mine')
+      .set('Authorization', `Bearer ${member.token}`)
+      .expect(200);
+    expect(memberMine.body.household._id).toBe(householdId);
+  });
+
   test('a non-member is rejected with 403 from household routes', async () => {
     const owner = await registerUser('owner4@test.com');
     const outsider = await registerUser('outsider4@test.com');

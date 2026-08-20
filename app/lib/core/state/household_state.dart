@@ -22,27 +22,62 @@ class HouseholdIdNotifier extends StateNotifier<AsyncValue<String?>> {
   // catches all of those cases in one place, instead of every downstream
   // screen independently discovering "Household not found."
   Future<void> _load() async {
+    // Explicit even though the constructor's super() call already starts in
+    // this state — refresh() re-enters here later, when state may already be
+    // AsyncData(null) from a previous clear(). Without resetting to loading
+    // first, _AuthenticatedGate would flash onboarding for a frame before
+    // this resolves.
+    state = const AsyncValue.loading();
     final id = await ref.read(householdStoreProvider).read();
-    if (id == null) {
-      state = const AsyncValue.data(null);
-      return;
+    if (id != null) {
+      try {
+        await ref.read(householdRepositoryProvider).get(id);
+        state = AsyncValue.data(id);
+        return;
+      } on ApiException {
+        // The household is gone, or this account isn't a member of it
+        // anymore — drop the stale reference and fall through to the
+        // server-side lookup below rather than assuming "no household".
+        await ref.read(householdStoreProvider).clear();
+      } catch (_) {
+        // Network failure etc. — not evidence the household is actually
+        // gone, so keep the cached id optimistically; the screens that
+        // depend on it already have their own retry affordances.
+        state = AsyncValue.data(id);
+        return;
+      }
     }
+
+    // No usable local cache. Rather than assuming this account has no
+    // household, ask the server directly — the cache is empty after any
+    // logout/login on this device (by design, so a different account
+    // signing in next doesn't inherit it), a reinstall, or a first login on
+    // a new device, none of which mean the account actually left its
+    // household. Without this, a returning user hits onboarding with no way
+    // back in: re-"join"-ing their own household 409s as "already a member".
     try {
-      await ref.read(householdRepositoryProvider).get(id);
-      state = AsyncValue.data(id);
-    } on ApiException {
-      // The household is gone, or this account isn't a member of it anymore
-      // — drop the stale reference so onboarding is offered instead of a
-      // screen that can never load.
-      await ref.read(householdStoreProvider).clear();
-      state = const AsyncValue.data(null);
+      final household = await ref.read(householdRepositoryProvider).getMine();
+      if (household == null) {
+        state = const AsyncValue.data(null);
+      } else {
+        await ref.read(householdStoreProvider).write(household.id);
+        state = AsyncValue.data(household.id);
+      }
     } catch (_) {
-      // Network failure etc. — not evidence the household is actually gone,
-      // so keep the cached id optimistically; the screens that depend on it
-      // already have their own retry affordances.
-      state = AsyncValue.data(id);
+      state = const AsyncValue.data(null);
     }
   }
+
+  // Public re-entry point for _load's logic, for callers outside this
+  // notifier's own constructor. _load only ever runs once, at provider
+  // construction (app cold-start) — this notifier is not autoDispose, so it
+  // survives logout/login cycles within the same app run. Without calling
+  // this after a fresh login/register, a returning user's household would
+  // never be looked up again after their first logout: clear() below sets
+  // state to null but nothing re-triggers the server-side lookup, so
+  // _AuthenticatedGate would offer onboarding even though the account still
+  // has a household server-side.
+  Future<void> refresh() => _load();
 
   Future<void> set(String householdId) async {
     await ref.read(householdStoreProvider).write(householdId);

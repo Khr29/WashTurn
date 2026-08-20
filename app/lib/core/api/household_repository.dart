@@ -26,6 +26,17 @@ class HouseholdRepository {
     return Household.fromJson(json['household']);
   }
 
+  /// The household this account already belongs to, if any — looked up
+  /// server-side rather than from the on-device cache. Lets a returning user
+  /// (after logout/login, a reinstall, or a new device) recover their
+  /// existing household instead of hitting onboarding with no way back in
+  /// (re-"join"-ing their own household 409s as "already a member").
+  Future<Household?> getMine() async {
+    final json = await client.get('/households/mine');
+    final household = json['household'];
+    return household == null ? null : Household.fromJson(household as Map<String, dynamic>);
+  }
+
   Future<List<HouseholdMemberProfile>> getMembers(String householdId) async {
     final json = await client.get('/households/$householdId/members');
     return (json['members'] as List<dynamic>)

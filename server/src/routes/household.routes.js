@@ -14,6 +14,13 @@ router.use(authenticate);
 
 router.post('/', householdController.create);
 router.post('/join', joinHouseholdLimiter, householdController.join);
+// Must come before '/:id' — otherwise Express would match this as a request
+// for the household literally named "mine" and requireHouseholdMember would
+// 404/403 it. Lets the app recover a user's household after any event that
+// clears the on-device cache (logout, reinstall, a new device) without a
+// dead-end 409 from re-"join"-ing a household they're already in — see
+// household.service.js findMyHousehold.
+router.get('/mine', householdController.getMine);
 
 router.get('/:id', requireHouseholdMember('id'), householdController.getOne);
 router.get('/:id/members', requireHouseholdMember('id'), householdController.getMembers);
