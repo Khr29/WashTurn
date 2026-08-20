@@ -5,6 +5,12 @@ const User = require('../models/User');
 
 const register = asyncHandler(async (req, res) => {
   const { name, email, password } = req.body;
+  // Type-checked, not just truthiness — a non-string body value (an object,
+  // array, or number all pass `!value`) would otherwise reach bcrypt/Mongoose
+  // and crash with a raw TypeError (500) instead of a clean validation error.
+  if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
+    throw new ApiError(400, 'name, email, and password are required.');
+  }
   if (!name || !email || !password) {
     throw new ApiError(400, 'name, email, and password are required.');
   }
@@ -18,7 +24,7 @@ const register = asyncHandler(async (req, res) => {
 
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) {
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
     throw new ApiError(400, 'email and password are required.');
   }
 

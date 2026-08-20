@@ -284,6 +284,18 @@ async function cancelPendingRequestsFor(turnId, exceptRequestId = null) {
   await TurnRequest.updateMany(filter, { $set: { status: 'CANCELLED', resolvedAt: new Date() } });
 }
 
+// Called when a member is removed from a household — otherwise their pending
+// requests linger forever: still shown to turn owners as "Incoming requests"
+// from someone who can no longer be granted the turn (acceptTurnRequest's
+// membership re-check above would reject it anyway), and still blocking that
+// user from opening a fresh request on the same turn if they're re-invited.
+async function cancelPendingRequestsFromUser(householdId, requesterId) {
+  await TurnRequest.updateMany(
+    { householdId, requesterId, status: 'PENDING' },
+    { $set: { status: 'CANCELLED', resolvedAt: new Date() } }
+  );
+}
+
 // Requesting someone's turn is intentionally decoupled from Turn.status — it
 // must be possible even while the machine is IN_USE, since the owner may
 // only be able to respond once their current wash is done.
@@ -333,6 +345,16 @@ async function acceptTurnRequest(turnId, requestId, ownerId) {
 
   if (turn.scheduledUserId.toString() !== ownerId) {
     throw new ApiError(403, 'Only the current owner of this turn can accept requests for it.');
+  }
+
+  // A request can sit PENDING indefinitely, so the requester may have been
+  // removed from the household after requesting and before this accept —
+  // re-check membership now rather than trusting the request's mere
+  // existence, otherwise accepting it would hand turn ownership to someone
+  // no longer in the household.
+  const household = await Household.findById(turn.householdId);
+  if (!household || !household.isMember(request.requesterId)) {
+    throw new ApiError(409, 'The requester is no longer a member of this household.');
   }
 
   const acceptedRequest = await TurnRequest.findOneAndUpdate(
@@ -408,4 +430,5 @@ module.exports = {
   acceptTurnRequest,
   rejectTurnRequest,
   cancelTurnRequest,
+  cancelPendingRequestsFromUser,
 };

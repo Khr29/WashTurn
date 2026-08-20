@@ -93,6 +93,14 @@ async function removeMember(household, memberUserId) {
 
   household.members = household.members.filter((m) => m.userId.toString() !== memberUserId);
   await household.save();
+
+  // Otherwise a pending request from the removed member lingers indefinitely
+  // — still shown to turn owners as an "incoming request" from someone who
+  // can no longer legitimately be granted the turn (see acceptTurnRequest's
+  // membership re-check).
+  const turnService = require('./turn.service');
+  await turnService.cancelPendingRequestsFromUser(household._id, memberUserId);
+
   return household;
 }
 
