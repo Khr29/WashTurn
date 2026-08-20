@@ -790,7 +790,7 @@ class _DryingCardState extends ConsumerState<_DryingCard> {
               Expanded(child: Text('$name needs help drying their clothes')),
               IconButton(
                 tooltip: 'Accept',
-                icon: const Icon(Icons.check_circle_outline, color: Colors.green),
+                icon: Icon(Icons.check_circle_outline, color: successColor),
                 onPressed: _busy ? null : () => _run(() => ref.read(dryingProvider.notifier).accept(req.id)),
               ),
               IconButton(
@@ -867,7 +867,9 @@ class _DryingFavorsCard extends StatelessWidget {
                       ? 'You owe ${balance.youOwe} drying favor${balance.youOwe == 1 ? '' : 's'}'
                       : 'Owes you ${balance.owesYou} drying favor${balance.owesYou == 1 ? '' : 's'}',
                   style: TextStyle(
-                    color: balance.youOwe > 0 ? theme.colorScheme.error : Colors.green,
+                    color: balance.youOwe > 0
+                        ? theme.colorScheme.error
+                        : (theme.brightness == Brightness.dark ? AppTheme.successDark : AppTheme.success),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
