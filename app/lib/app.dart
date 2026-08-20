@@ -39,6 +39,21 @@ class _RootGateState extends ConsumerState<_RootGate> {
 
   @override
   Widget build(BuildContext context) {
+    // _RootGate is the base route of the app's single Navigator; screens like
+    // RegisterScreen and ProfileScreen are pushed on top of it. Rebuilding
+    // this widget (e.g. to swap LoginScreen for MainShell) does NOT by itself
+    // pop those routes — without this, a successful registration or a logout
+    // triggered from a pushed screen leaves that screen stuck on top,
+    // covering the new content underneath it. Popping back to the root route
+    // on every authenticated<->unauthenticated transition keeps whatever
+    // _RootGate now renders actually visible.
+    ref.listen<AuthState>(authStateProvider, (previous, next) {
+      final wasAuthenticated = previous is AuthAuthenticated;
+      final isAuthenticated = next is AuthAuthenticated;
+      if (wasAuthenticated != isAuthenticated) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    });
     final authState = ref.watch(authStateProvider);
 
     return switch (authState) {

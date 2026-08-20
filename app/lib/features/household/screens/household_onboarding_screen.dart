@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_exception.dart';
+import '../../../core/state/auth_state.dart';
 import '../../../core/state/household_state.dart';
 import '../../../core/state/providers.dart';
 
@@ -84,6 +85,16 @@ class _HouseholdOnboardingScreenState extends ConsumerState<HouseholdOnboardingS
     return Scaffold(
       appBar: AppBar(
         title: const Text('Set up your household'),
+        // Otherwise a user who signed into the wrong account (or just wants
+        // to switch) has no way back to the login screen from here — nothing
+        // downstream of this screen works without a household.
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Log out',
+            onPressed: () => ref.read(authStateProvider.notifier).logout(),
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: const [Tab(text: 'Create'), Tab(text: 'Join')],

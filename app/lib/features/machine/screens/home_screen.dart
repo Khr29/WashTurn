@@ -38,6 +38,47 @@ String _nameFor(String userId, List<HouseholdMemberProfile> members, String? cur
   return match.isEmpty ? 'Someone' : match.first.name;
 }
 
+/// A member-picker bottom sheet whose list scrolls once it outgrows the
+/// available height, so a household with many members doesn't overflow a
+/// fixed-size, non-scrolling sheet.
+Future<String?> _pickMemberSheet(
+  BuildContext context, {
+  required String title,
+  required List<HouseholdMemberProfile> members,
+}) {
+  return showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    builder: (context) => SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final member in members)
+                    ListTile(
+                      leading: MemberAvatar(name: member.name, radius: 16),
+                      title: Text(member.name),
+                      onTap: () => Navigator.of(context).pop(member.id),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -539,26 +580,8 @@ class _TurnOwnershipCardState extends ConsumerState<_TurnOwnershipCard> {
     final otherMembers = widget.members.where((m) => m.id != widget.currentUserId).toList();
     if (otherMembers.isEmpty) return;
 
-    final selectedUserId = await showModalBottomSheet<String>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('Give turn to…', style: Theme.of(context).textTheme.titleMedium),
-            ),
-            for (final member in otherMembers)
-              ListTile(
-                leading: MemberAvatar(name: member.name, radius: 16),
-                title: Text(member.name),
-                onTap: () => Navigator.of(context).pop(member.id),
-              ),
-          ],
-        ),
-      ),
-    );
+    if (!mounted) return;
+    final selectedUserId = await _pickMemberSheet(context, title: 'Give turn to…', members: otherMembers);
 
     if (selectedUserId == null || !mounted) return;
     await _run(() => ref.read(homeProvider.notifier).transfer(selectedUserId));
@@ -690,26 +713,8 @@ class _DryingCardState extends ConsumerState<_DryingCard> {
     final otherMembers = widget.members.where((m) => m.id != widget.currentUserId).toList();
     if (otherMembers.isEmpty) return;
 
-    final selectedUserId = await showModalBottomSheet<String>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('Ask someone to dry your clothes…', style: Theme.of(context).textTheme.titleMedium),
-            ),
-            for (final member in otherMembers)
-              ListTile(
-                leading: MemberAvatar(name: member.name, radius: 16),
-                title: Text(member.name),
-                onTap: () => Navigator.of(context).pop(member.id),
-              ),
-          ],
-        ),
-      ),
-    );
+    final selectedUserId =
+        await _pickMemberSheet(context, title: 'Ask someone to dry your clothes…', members: otherMembers);
 
     if (selectedUserId == null || !mounted) return;
     final helperName = otherMembers.firstWhere((m) => m.id == selectedUserId).name;

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_exception.dart';
 import '../../../core/models/household.dart';
 import '../../../core/models/notification_preferences.dart';
 import '../../../core/state/auth_state.dart';
@@ -8,6 +9,7 @@ import '../../../core/state/household_state.dart';
 import '../../../core/state/notification_preferences_state.dart';
 import '../../../core/state/providers.dart';
 import '../../../shared/widgets/async_view.dart';
+import '../../../shared/widgets/confirm_sheet.dart';
 import '../../../shared/widgets/member_avatar.dart';
 import '../../household/screens/invite_screen.dart';
 
@@ -85,13 +87,19 @@ class _AccountCard extends StatelessWidget {
           children: [
             MemberAvatar(name: name, radius: 26),
             const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(name, style: theme.textTheme.titleMedium),
-                Text(isOwner ? 'Owner' : 'Member', style: theme.textTheme.bodySmall),
-                Text(email, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name, style: theme.textTheme.titleMedium, overflow: TextOverflow.ellipsis),
+                  Text(isOwner ? 'Owner' : 'Member', style: theme.textTheme.bodySmall),
+                  Text(
+                    email,
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -123,7 +131,7 @@ class _InviteCard extends StatelessWidget {
   }
 }
 
-class _MembersCard extends ConsumerWidget {
+class _MembersCard extends ConsumerStatefulWidget {
   final AsyncValue<List<HouseholdMemberProfile>> membersAsync;
   final bool isOwner;
   final String? currentUserId;
@@ -137,7 +145,42 @@ class _MembersCard extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_MembersCard> createState() => _MembersCardState();
+}
+
+class _MembersCardState extends ConsumerState<_MembersCard> {
+  String? _removingUserId;
+
+  Future<void> _removeMember(HouseholdMemberProfile member) async {
+    final confirmed = await showConfirmSheet(
+      context,
+      title: 'Remove ${member.name}?',
+      message: '${member.name} will lose access to this household and its schedule. They can rejoin later with '
+          'the invite code.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _removingUserId = member.id);
+    try {
+      await ref.read(householdRepositoryProvider).removeMember(widget.householdId, member.id);
+      ref.invalidate(membersProvider);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not reach the server. Check your connection and try again.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _removingUserId = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
       child: Padding(
@@ -151,7 +194,7 @@ class _MembersCard extends ConsumerWidget {
             ),
             const SizedBox(height: 4),
             AsyncView(
-              value: membersAsync,
+              value: widget.membersAsync,
               builder: (context, members) => Column(
                 children: [
                   for (final member in members)
@@ -159,16 +202,18 @@ class _MembersCard extends ConsumerWidget {
                       leading: MemberAvatar(name: member.name, radius: 18),
                       title: Text(member.name),
                       subtitle: Text(member.isOwner ? 'Owner' : 'Member'),
-                      trailing: (isOwner && !member.isOwner && member.id != currentUserId)
-                          ? IconButton(
-                              icon: const Icon(Icons.person_remove_outlined),
-                              onPressed: () async {
-                                await ref
-                                    .read(householdRepositoryProvider)
-                                    .removeMember(householdId, member.id);
-                                ref.invalidate(membersProvider);
-                              },
-                            )
+                      trailing: (widget.isOwner && !member.isOwner && member.id != widget.currentUserId)
+                          ? (_removingUserId == member.id
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : IconButton(
+                                  icon: const Icon(Icons.person_remove_outlined),
+                                  tooltip: 'Remove member',
+                                  onPressed: _removingUserId != null ? null : () => _removeMember(member),
+                                ))
                           : null,
                     ),
                 ],

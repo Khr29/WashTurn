@@ -8,8 +8,9 @@ import 'token_store.dart';
 class ApiClient {
   final TokenStore tokenStore;
   final http.Client _http;
+  final void Function()? onUnauthorized;
 
-  ApiClient({required this.tokenStore, http.Client? httpClient})
+  ApiClient({required this.tokenStore, http.Client? httpClient, this.onUnauthorized})
       : _http = httpClient ?? http.Client();
 
   Uri _uri(String path, [Map<String, String>? query]) =>
@@ -33,6 +34,11 @@ class ApiClient {
     final message = (body is Map && body['error'] is String)
         ? body['error'] as String
         : 'Request failed (${res.statusCode})';
+    // A 401 mid-session means the token that was valid at app start has since
+    // expired or been revoked server-side — every subsequent call would fail
+    // the same way, so this is the one place to notice it and kick the user
+    // back to login instead of leaving every screen stuck retrying forever.
+    if (res.statusCode == 401) onUnauthorized?.call();
     throw ApiException(res.statusCode, message);
   }
 

@@ -81,6 +81,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  /// Called when any API call comes back 401 while we believed the user was
+  /// signed in — the token expired or was revoked server-side mid-session.
+  /// Guarded to authenticated-only so it can't fire from a login/register
+  /// screen's own failed-credentials 401 (state is AuthLoading there, not
+  /// AuthAuthenticated) or interfere with an already-logged-out session.
+  Future<void> sessionExpired() async {
+    if (state is! AuthAuthenticated) return;
+    await ref.read(tokenStoreProvider).clear();
+    await ref.read(householdStoreProvider).clear();
+    state = const AuthUnauthenticated(error: 'Your session has expired. Please log in again.');
+  }
+
   Future<void> logout() async {
     // Best-effort and must run before the token is cleared below (the
     // unregister call needs a still-valid JWT) — this device shouldn't keep

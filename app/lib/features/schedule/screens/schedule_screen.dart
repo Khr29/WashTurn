@@ -100,21 +100,32 @@ class ScheduleScreen extends ConsumerWidget {
   ) async {
     final selectedUserId = await showModalBottomSheet<String>(
       context: context,
+      isScrollControlled: true,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('Assign ${_dayNames[entry.dayOfWeek]}', style: Theme.of(context).textTheme.titleMedium),
-            ),
-            for (final member in members)
-              ListTile(
-                title: Text(member.name),
-                trailing: member.id == entry.userId ? const Icon(Icons.check) : null,
-                onTap: () => Navigator.of(context).pop(member.id),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Assign ${_dayNames[entry.dayOfWeek]}', style: Theme.of(context).textTheme.titleMedium),
               ),
-          ],
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final member in members)
+                      ListTile(
+                        title: Text(member.name),
+                        trailing: member.id == entry.userId ? const Icon(Icons.check) : null,
+                        onTap: () => Navigator.of(context).pop(member.id),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
