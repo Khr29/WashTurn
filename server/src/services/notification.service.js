@@ -155,9 +155,13 @@ async function notifyEmergencyClaimedImpl(turn) {
   });
 }
 
-async function notifyTurnFinishedImpl(turn) {
-  const name = await usernameFor(turn.actingUserId);
-  await notifyHousehold(turn.householdId, turn.actingUserId, 'machineFinished', {
+// Takes the acting user explicitly rather than reading turn.actingUserId —
+// finishTurn clears that field as part of the same update (nobody's actively
+// washing once a wash finishes, see turn.service.js), so by the time this
+// runs the turn itself no longer says who just finished.
+async function notifyTurnFinishedImpl(turn, actingUserId) {
+  const name = await usernameFor(actingUserId);
+  await notifyHousehold(turn.householdId, actingUserId, 'machineFinished', {
     title: '✅ WashTurn',
     body: `${name} finished using the washing machine. It's available now.`,
     data: { type: 'TURN_FINISHED', turnId: turn._id.toString() },

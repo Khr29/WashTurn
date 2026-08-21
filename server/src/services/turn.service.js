@@ -36,13 +36,17 @@ function slotWindowForDate(entry, dateString, timezone) {
   const startTime = hasWindow ? entry.startTime : '00:00';
   const endTime = hasWindow ? entry.endTime : '24:00';
 
-  // endTime <= startTime (lexicographic works for zero-padded "HH:mm") means
-  // the slot crosses midnight, e.g. 22:00 -> 02:00 — its end lands on the
-  // next calendar date. This is also what "24:00" always hits, giving the
-  // whole-day case its next-midnight boundary for free.
-  const crossesMidnight = endTime <= startTime;
+  // "24:00" (the whole-day sentinel) always rolls onto the next calendar
+  // date — it must be checked on its own rather than folded into the
+  // lexicographic comparison below, because "24:00" <= startTime is FALSE
+  // for any real startTime (e.g. "24:00" > "00:00" as strings), which would
+  // otherwise collapse the whole-day case into a zero-length same-day slot.
+  // Any other endTime <= startTime (zero-padded "HH:mm" compares correctly
+  // as strings) means a genuine cross-midnight slot, e.g. 22:00 -> 02:00.
+  const wholeDayEnd = endTime === '24:00';
+  const crossesMidnight = wholeDayEnd || endTime <= startTime;
   const endDateString = crossesMidnight ? addDaysToDateString(dateString, 1) : dateString;
-  const normalizedEndTime = endTime === '24:00' ? '00:00' : endTime;
+  const normalizedEndTime = wholeDayEnd ? '00:00' : endTime;
 
   return {
     startAt: zonedTimeToUtc(dateString, startTime, timezone),
@@ -319,7 +323,7 @@ async function finishTurn(turnId, userId) {
   }
 
   await logActivity(updated, userId, 'COMPLETED', 'Wash completed.');
-  await notificationService.notifyTurnFinished(updated);
+  await notificationService.notifyTurnFinished(updated, userId);
   await realtimeService.emitTurnUpdated(updated);
 
   return updated;
