@@ -49,11 +49,13 @@ afterAll(async () => {
 });
 
 describe('normal turn flow', () => {
-  test('PENDING -> START -> IN_USE -> FINISH -> COMPLETED, machine state matches at every step', async () => {
+  test('PENDING -> START -> IN_USE -> FINISH -> PENDING (slot still open), machine state matches at every step', async () => {
     const owner = await registerUser(`owner-${Date.now()}@test.com`);
     const household = await createHousehold(owner.token);
     const turn = await getTodayTurn(owner.token, household._id);
     expect(turn.status).toBe('PENDING');
+    expect(turn.startAt).not.toBeNull();
+    expect(turn.endAt).not.toBeNull();
     expect((await getMachine(owner.token, household._id)).status).toBe('AVAILABLE');
 
     const start = await request(app)
@@ -71,13 +73,19 @@ describe('normal turn flow', () => {
       .post(`/api/turns/${turn._id}/finish`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
-    expect(finish.body.turn.status).toBe('COMPLETED');
+    // Finishing a wash does NOT end the turn — the owner still holds the
+    // slot (its endAt hasn't arrived yet) and can wash again, so this goes
+    // back to PENDING rather than a terminal status. See
+    // turn.timeslot.test.js for the full time-slot behavior suite.
+    expect(finish.body.turn.status).toBe('PENDING');
+    expect(finish.body.turn.actingUserId).toBeNull();
     expect(finish.body.turn.finishedAt).not.toBeNull();
-    // The machine no longer "freezes" on COMPLETED for the rest of the day —
-    // finishing immediately frees it up for another turn the same day (see
-    // the multi-turn-per-day model in turn.service.js), so the very next
-    // lookup materializes a fresh PENDING turn and the machine reads AVAILABLE.
     expect((await getMachine(owner.token, household._id)).status).toBe('AVAILABLE');
+
+    // The same turnId is still current — finishing did not materialize a new
+    // turn, because the owner's slot (whole-day default here) hasn't ended.
+    const stillCurrent = await getTodayTurn(owner.token, household._id);
+    expect(stillCurrent._id).toBe(turn._id);
   });
 
   test('rejects invalid estimated durations', async () => {
@@ -107,10 +115,16 @@ describe('normal turn flow', () => {
       .post(`/api/turns/${turn._id}/start`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
-    await request(app)
+    // Finishing mid-slot no longer terminates the turn (see the flow test
+    // above), so to exercise "already terminal" rejections here, force the
+    // slot's end time into the past before finishing — the same real-time
+    // boundary a slot naturally crosses on its own, just fast-forwarded.
+    await Turn.findByIdAndUpdate(turn._id, { endAt: new Date(Date.now() - 1000) });
+    const finish = await request(app)
       .post(`/api/turns/${turn._id}/finish`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
+    expect(finish.body.turn.status).toBe('COMPLETED');
 
     await request(app)
       .post(`/api/turns/${turn._id}/start`)
@@ -186,7 +200,7 @@ describe('release flow', () => {
 });
 
 describe('emergency flow', () => {
-  test('PENDING -> RELEASED -> CLAIMED -> IN_USE -> COMPLETED, and only the claimant can act on it', async () => {
+  test('PENDING -> RELEASED -> CLAIMED -> IN_USE -> PENDING (slot transferred, still open), and only the claimant can act on it', async () => {
     const owner = await registerUser(`owner-${Date.now()}@test.com`);
     const emergencyUser = await registerUser(`emergency-${Date.now()}@test.com`);
     const bystander = await registerUser(`bystander-${Date.now()}@test.com`);
@@ -207,6 +221,10 @@ describe('emergency flow', () => {
     expect(claim.body.turn.status).toBe('CLAIMED');
     expect(claim.body.turn.type).toBe('EMERGENCY');
     expect(claim.body.turn.actingUserId).toBe(emergencyUser.id);
+    // Claiming reassigns ownership of the rest of the slot to the claimant
+    // — a slot now survives multiple washes, so someone has to own "the
+    // rest of it" once the emergency user is done with their first one.
+    expect(claim.body.turn.scheduledUserId).toBe(emergencyUser.id);
 
     // owner (original scheduled user) cannot start the claimed turn
     await request(app)
@@ -236,10 +254,19 @@ describe('emergency flow', () => {
       .post(`/api/turns/${turn._id}/finish`)
       .set('Authorization', `Bearer ${emergencyUser.token}`)
       .expect(200);
-    expect(finish.body.turn.status).toBe('COMPLETED');
     // See the equivalent comment in 'normal turn flow' above — finishing
-    // frees the machine immediately rather than freezing it for the day.
+    // doesn't end the turn, it frees the machine within the same slot.
+    expect(finish.body.turn.status).toBe('PENDING');
     expect((await getMachine(owner.token, household._id)).status).toBe('AVAILABLE');
+
+    // The emergency claimant now owns the rest of the slot and can wash
+    // again without re-claiming or re-releasing.
+    const secondWash = await request(app)
+      .post(`/api/turns/${turn._id}/start`)
+      .set('Authorization', `Bearer ${emergencyUser.token}`)
+      .expect(200);
+    expect(secondWash.body.turn.status).toBe('IN_USE');
+    expect(secondWash.body.turn.type).toBe('EMERGENCY');
   });
 
   test('claiming a turn that was never released is rejected', async () => {
@@ -276,8 +303,8 @@ describe('cross-household isolation', () => {
   });
 });
 
-describe('day-rollover carryover', () => {
-  test('a wash still IN_USE from a previous day stays visible instead of being hidden behind a fresh PENDING turn', async () => {
+describe('slot boundary drives currency, not calendar date', () => {
+  test('a turn whose informational `date` field has rolled over stays current as long as its real endAt has not passed', async () => {
     const owner = await registerUser(`owner-${Date.now()}@test.com`);
     const household = await createHousehold(owner.token);
     const turn = await getTodayTurn(owner.token, household._id);
@@ -287,21 +314,29 @@ describe('day-rollover carryover', () => {
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
 
-    // Simulate the calendar day rolling over while the wash is still running.
+    // `date` is purely informational now (see Turn.js) — mutate it alone,
+    // simulating what used to be "the calendar day rolled over", and confirm
+    // it has zero effect on which turn is current. Only endAt does.
     await Turn.findByIdAndUpdate(turn._id, { date: '2000-01-01' });
 
-    const carriedOverTurn = await getTodayTurn(owner.token, household._id);
-    expect(carriedOverTurn._id).toBe(turn._id);
-    expect(carriedOverTurn.status).toBe('IN_USE');
+    const stillCurrent = await getTodayTurn(owner.token, household._id);
+    expect(stillCurrent._id).toBe(turn._id);
+    expect(stillCurrent.status).toBe('IN_USE');
     expect((await getMachine(owner.token, household._id)).status).toBe('IN_USE');
 
-    // Finishing it should still work through the normal endpoint.
-    await request(app)
+    // Finishing still works and keeps the same turn open (its real endAt is
+    // still in the future — see turn.timeslot.test.js for exhaustive
+    // coverage of the endAt-driven finalize transition).
+    const finish = await request(app)
       .post(`/api/turns/${turn._id}/finish`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
+    expect(finish.body.turn.status).toBe('PENDING');
+    expect(finish.body.turn._id).toBe(turn._id);
 
-    // Now that nothing is active, a fresh turn for today should appear.
+    // Now push the *real* boundary (endAt) into the past — that's what
+    // actually finalizes it and materializes a fresh turn.
+    await Turn.findByIdAndUpdate(turn._id, { endAt: new Date(Date.now() - 1000) });
     const freshTurn = await getTodayTurn(owner.token, household._id);
     expect(freshTurn._id).not.toBe(turn._id);
     expect(freshTurn.status).toBe('PENDING');

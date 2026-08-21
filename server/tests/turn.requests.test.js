@@ -90,8 +90,8 @@ afterAll(async () => {
   await mongoose.disconnect();
 });
 
-describe('A: multiple turns per day for the same user', () => {
-  test('the same user can complete a second turn the same calendar day', async () => {
+describe('A: multiple washes within the same slot for the same user', () => {
+  test('the same user can wash a second time within the same open slot (same turn, not a new one)', async () => {
     const { users, household } = await setupHousehold(['khaled']);
     const [khaled] = users;
 
@@ -99,11 +99,15 @@ describe('A: multiple turns per day for the same user', () => {
     expect(turn1.scheduledUserId).toBe(khaled.id);
 
     await start(khaled.token, turn1._id).expect(200);
-    await finish(khaled.token, turn1._id).expect(200);
+    const finishRes = await finish(khaled.token, turn1._id).expect(200);
+    // Finishing a wash does not end the turn — same turnId, back to PENDING,
+    // ready for another wash within the still-open slot (see
+    // turn.timeslot.test.js for the full time-slot behavior suite).
+    expect(finishRes.body.turn.status).toBe('PENDING');
+    expect(finishRes.body.turn._id).toBe(turn1._id);
 
     const turn2 = await getCurrentTurn(khaled.token, household._id);
-    expect(turn2._id).not.toBe(turn1._id);
-    expect(turn2.date).toBe(turn1.date);
+    expect(turn2._id).toBe(turn1._id);
     expect(turn2.status).toBe('PENDING');
     expect(turn2.scheduledUserId).toBe(khaled.id);
 
@@ -112,7 +116,7 @@ describe('A: multiple turns per day for the same user', () => {
     expect(startRes.body.turn.status).toBe('IN_USE');
   });
 
-  test('a second open turn cannot be created for the same day while one is still open', async () => {
+  test('a second open turn cannot be created for the household while one is still open', async () => {
     const { users, household } = await setupHousehold(['ahmed']);
     const [ahmed] = users;
     const turn1 = await getCurrentTurn(ahmed.token, household._id);
@@ -159,10 +163,12 @@ describe('B/C/D/E/F: request another user\'s turn, including while IN_USE', () =
     expect(acceptRes.body.turn.actingUserId).toBe(khaled.id);
     expect(acceptRes.body.turn.status).toBe('IN_USE');
 
-    // K: existing finish behavior still works for the original acting user.
+    // K: existing finish behavior still works for the original acting user
+    // — it returns the turn to PENDING (the slot is still open) rather than
+    // ending it.
     const finishRes = await finish(khaled.token, turn._id);
     expect(finishRes.status).toBe(200);
-    expect(finishRes.body.turn.status).toBe('COMPLETED');
+    expect(finishRes.body.turn.status).toBe('PENDING');
   });
 
   test('requesting your own turn is rejected', async () => {
@@ -311,14 +317,19 @@ describe('J: direct transfer to a selected household member', () => {
     const turn = await getCurrentTurn(khaled.token, household._id);
 
     await start(khaled.token, turn._id).expect(200);
-    await finish(khaled.token, turn._id).expect(200);
+    // Finishing alone no longer terminates the turn (the slot stays open),
+    // so push the slot's real end time into the past first to get a genuine
+    // terminal turn to test the transfer-rejection against.
+    await Turn.findByIdAndUpdate(turn._id, { endAt: new Date(Date.now() - 1000) });
+    const finishRes = await finish(khaled.token, turn._id).expect(200);
+    expect(finishRes.body.turn.status).toBe('COMPLETED');
 
     await transfer(khaled.token, turn._id, ahmed.id).expect(409);
   });
 });
 
-describe('K: existing start/finish/release behavior is unaffected', () => {
-  test('normal PENDING -> IN_USE -> COMPLETED flow still works exactly as before', async () => {
+describe('K: existing start/finish/release behavior is unaffected (beyond the time-slot change)', () => {
+  test('normal PENDING -> IN_USE -> PENDING (slot still open) flow works', async () => {
     const { users, household } = await setupHousehold(['solo']);
     const [solo] = users;
     const turn = await getCurrentTurn(solo.token, household._id);
@@ -327,7 +338,8 @@ describe('K: existing start/finish/release behavior is unaffected', () => {
     await start(solo.token, turn._id).expect(200);
     const finishRes = await finish(solo.token, turn._id);
     expect(finishRes.status).toBe(200);
-    expect(finishRes.body.turn.status).toBe('COMPLETED');
+    expect(finishRes.body.turn.status).toBe('PENDING');
+    expect(finishRes.body.turn._id).toBe(turn._id);
   });
 
   test('release still works and still blocks reclaiming by the releaser', async () => {

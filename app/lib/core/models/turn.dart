@@ -23,6 +23,12 @@ class Turn {
   final String householdId;
   final String machineId;
   final String date;
+  // The real instants this turn's owner has the machine for — the single
+  // source of truth for "is this turn active right now" and for display; a
+  // slot can cross midnight, so never assume endAt is on the same calendar
+  // day as startAt (or that it's "end of day").
+  final DateTime startAt;
+  final DateTime endAt;
   final String scheduledUserId;
   final String? actingUserId;
   final TurnType? type;
@@ -37,6 +43,8 @@ class Turn {
     required this.householdId,
     required this.machineId,
     required this.date,
+    required this.startAt,
+    required this.endAt,
     required this.scheduledUserId,
     this.actingUserId,
     this.type,
@@ -49,11 +57,20 @@ class Turn {
 
   bool get isEmergency => type == TurnType.emergency;
 
+  /// Time left in this turn's slot, clamped to zero once endAt has passed
+  /// (a stale/not-yet-refreshed turn should never show a negative duration).
+  Duration remainingAt(DateTime now) {
+    final remaining = endAt.difference(now);
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
   factory Turn.fromJson(Map<String, dynamic> json) => Turn(
         id: json['_id'] as String,
         householdId: json['householdId'] as String,
         machineId: json['machineId'] as String,
         date: json['date'] as String,
+        startAt: DateTime.parse(json['startAt'] as String),
+        endAt: DateTime.parse(json['endAt'] as String),
         scheduledUserId: json['scheduledUserId'] as String,
         actingUserId: json['actingUserId'] as String?,
         type: _parseType(json['type'] as String?),

@@ -33,6 +33,33 @@ const _dayNames = {
 
 const _durationChoices = [30, 45, 60, 90];
 
+/// "2h 15m" / "45m" / "1d 3h" — never a raw negative or a bare "0m", since
+/// Turn.remainingAt already clamps to zero and callers only show this while
+/// the slot is still open.
+String _formatRemaining(Duration d) {
+  final days = d.inDays;
+  final hours = d.inHours % 24;
+  final minutes = d.inMinutes % 60;
+  if (days > 0) return '${days}d ${hours}h';
+  if (hours > 0) return '${hours}h ${minutes}m';
+  return '${minutes}m';
+}
+
+/// "6:00 PM" if [start] and [end] fall on the same calendar day, otherwise
+/// "6:00 PM Tue – 8:00 AM Wed" — a slot can cross midnight, so the day must
+/// be shown whenever the two instants land on different local dates.
+String _formatSlotRange(DateTime start, DateTime end) {
+  final localStart = start.toLocal();
+  final localEnd = end.toLocal();
+  final sameDay = localStart.year == localEnd.year &&
+      localStart.month == localEnd.month &&
+      localStart.day == localEnd.day;
+  final startLabel = DateFormat.jm().format(localStart);
+  final endLabel = DateFormat.jm().format(localEnd);
+  if (sameDay) return '$startLabel – $endLabel';
+  return '$startLabel ${DateFormat.E().format(localStart)} – $endLabel ${DateFormat.E().format(localEnd)}';
+}
+
 String _nameFor(String userId, List<HouseholdMemberProfile> members, String? currentUserId) {
   if (userId == currentUserId) return 'You';
   final match = members.where((m) => m.id == userId);
@@ -307,12 +334,12 @@ class _StatusCard extends StatelessWidget {
   String _statusDetail(Turn turn, List<HouseholdMemberProfile> members, String? currentUserId) {
     switch (turn.status) {
       case TurnStatus.pending:
-        return 'Available now.';
+        return 'Available now.${_remainingDetail(turn)}';
       case TurnStatus.released:
         final isMe = turn.scheduledUserId == currentUserId;
         final name = _nameFor(turn.scheduledUserId, members, currentUserId);
         final verb = isMe ? "don't" : "doesn't";
-        return "$name $verb need today's turn. Emergency use is available.";
+        return "$name $verb need this turn. Emergency use is available.${_remainingDetail(turn)}";
       case TurnStatus.claimed:
         final actingId = turn.actingUserId ?? '';
         final isMe = actingId == currentUserId;
@@ -324,12 +351,21 @@ class _StatusCard extends StatelessWidget {
         final isMe = actingId == currentUserId;
         final name = _nameFor(actingId, members, currentUserId);
         final verb = isMe ? 'are' : 'is';
-        return '$name $verb washing.${_timingDetail(turn)}';
+        return '$name $verb washing.${_timingDetail(turn)}${_remainingDetail(turn)}';
       case TurnStatus.completed:
-        return "Today's wash is finished. Machine available.";
+        return 'This turn has ended. Machine available.';
       case TurnStatus.expired:
-        return 'Nobody used the machine today.';
+        return 'Nobody used the machine during this turn.';
     }
+  }
+
+  // A turn now spans a whole owned time slot rather than a single day, so
+  // "how much of my slot is left" is worth surfacing alongside status —
+  // shown for every still-open status, not just while actively washing.
+  String _remainingDetail(Turn turn) {
+    final remaining = turn.remainingAt(DateTime.now());
+    if (remaining == Duration.zero) return '';
+    return ' ${_formatRemaining(remaining)} remaining in this turn.';
   }
 
   // "Started 7:15 PM · Estimated finish 8:00 PM" — computed from the
@@ -366,10 +402,11 @@ class _TodayTurnCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheduledName = _nameFor(turn.scheduledUserId, members, currentUserId);
     final isMe = currentUserId != null && turn.scheduledUserId == currentUserId;
-    final subtitle = isMe ? 'Your scheduled turn' : "$scheduledName's scheduled turn";
-    final timeSlot = (scheduleDay?.startTime != null && scheduleDay?.endTime != null)
-        ? '${scheduleDay!.startTime} – ${scheduleDay!.endTime}'
-        : null;
+    final subtitle = isMe ? 'Your turn' : "$scheduledName's turn";
+    // The turn's own startAt/endAt (its actual, possibly-reassigned slot),
+    // not the weekly schedule's raw "HH:mm" strings — those describe the
+    // recurring plan, this describes what this specific turn instance is.
+    final timeSlot = _formatSlotRange(turn.startAt, turn.endAt);
 
     return Card(
       child: Padding(
@@ -388,16 +425,14 @@ class _TodayTurnCard extends StatelessWidget {
                     subtitle,
                     style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
-                  if (timeSlot != null) ...[
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(Icons.schedule, size: 14, color: theme.colorScheme.onSurfaceVariant),
-                        const SizedBox(width: 4),
-                        Text(timeSlot, style: theme.textTheme.bodySmall),
-                      ],
-                    ),
-                  ],
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(Icons.schedule, size: 14, color: theme.colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 4),
+                      Text(timeSlot, style: theme.textTheme.bodySmall),
+                    ],
+                  ),
                 ],
               ),
             ),

@@ -89,7 +89,9 @@ describe('emergency turn claim', () => {
       .post(`/api/turns/${turn._id}/finish`)
       .set('Authorization', `Bearer ${owner.token}`)
       .expect(200);
-    expect(finishRes.body.turn.status).toBe('COMPLETED');
+    // Finishing no longer ends the turn — the owner's slot (whole-day
+    // default here) is still open, so it returns to PENDING.
+    expect(finishRes.body.turn.status).toBe('PENDING');
   });
 
   test('non-scheduled user cannot start before it is released', async () => {
