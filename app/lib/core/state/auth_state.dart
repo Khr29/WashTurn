@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/notifications/fcm_service.dart';
 import '../api/api_exception.dart';
 import '../models/user.dart';
+import '../realtime/socket_service.dart';
 import 'household_state.dart';
 import 'providers.dart';
 
@@ -41,6 +42,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final user = await ref.read(authRepositoryProvider).me();
       state = AuthAuthenticated(user);
+      ref.read(socketServiceProvider).connect(token);
     } on ApiException {
       // Token is invalid/expired server-side — discard it and require login
       // again. The cached household id goes with it: it's meaningless
@@ -68,6 +70,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final result = await ref.read(authRepositoryProvider).register(name: name, email: email, password: password);
       await ref.read(tokenStoreProvider).write(result.token);
       state = AuthAuthenticated(result.user);
+      ref.read(socketServiceProvider).connect(result.token);
       // householdIdProvider's _load only runs once, at its own construction
       // — it doesn't automatically re-check on a fresh login within the same
       // app run, so without this a returning user (after an earlier logout
@@ -88,6 +91,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final result = await ref.read(authRepositoryProvider).login(email: email, password: password);
       await ref.read(tokenStoreProvider).write(result.token);
       state = AuthAuthenticated(result.user);
+      ref.read(socketServiceProvider).connect(result.token);
       // See the note in register() above — same reason this is needed here.
       unawaited(ref.read(householdIdProvider.notifier).refresh());
     } on ApiException catch (e) {
@@ -104,6 +108,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// AuthAuthenticated) or interfere with an already-logged-out session.
   Future<void> sessionExpired() async {
     if (state is! AuthAuthenticated) return;
+    ref.read(socketServiceProvider).disconnect();
     await ref.read(tokenStoreProvider).clear();
     // Via the notifier, not householdStoreProvider directly, so the in-memory
     // householdIdProvider state is reset too (see the note in
@@ -130,6 +135,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // JWTs are stateless — even if this call fails, discarding the local
       // token below is sufficient to end the session on-device.
     }
+    ref.read(socketServiceProvider).disconnect();
     await ref.read(tokenStoreProvider).clear();
     // Via the notifier, not householdStoreProvider directly — see the note in
     // _restoreSession's catch block above.

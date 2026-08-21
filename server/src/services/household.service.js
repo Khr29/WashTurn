@@ -5,6 +5,7 @@ const User = require('../models/User');
 const { generateInviteCode } = require('../utils/inviteCode');
 const { ApiError } = require('../utils/ApiError');
 const { defaultHouseholdTimezone } = require('../config/env');
+const realtimeService = require('./realtime.service');
 
 const INVITE_CODE_MAX_ATTEMPTS = 5;
 
@@ -56,6 +57,7 @@ async function joinHousehold({ inviteCode, userId }) {
 
   household.members.push({ userId, joinedAt: new Date() });
   await household.save();
+  await realtimeService.emitHouseholdUpdated(household._id);
   return household;
 }
 
@@ -109,6 +111,8 @@ async function removeMember(household, memberUserId) {
   // membership re-check).
   const turnService = require('./turn.service');
   await turnService.cancelPendingRequestsFromUser(household._id, memberUserId);
+
+  await realtimeService.emitMemberRemoved(household._id, memberUserId);
 
   return household;
 }

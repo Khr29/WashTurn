@@ -1,7 +1,9 @@
+const http = require('http');
 const app = require('./app');
 const { connectDb } = require('./config/db');
 const { initFirebase } = require('./config/firebase');
 const { startDailyScheduler } = require('./jobs/dailyScheduler');
+const { initIo } = require('./realtime/io');
 const { port } = require('./config/env');
 const Turn = require('./models/Turn');
 
@@ -16,7 +18,13 @@ async function start() {
   initFirebase();
   startDailyScheduler();
 
-  app.listen(port, () => {
+  // Socket.IO needs the raw http.Server (not the Express app) so it can
+  // upgrade the same port's connections to websockets alongside normal HTTP
+  // requests.
+  const httpServer = http.createServer(app);
+  initIo(httpServer);
+
+  httpServer.listen(port, () => {
     console.log(`WashTurn API listening on port ${port}`);
   });
 }

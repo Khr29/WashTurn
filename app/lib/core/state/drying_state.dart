@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_exception.dart';
 import '../models/drying_request.dart';
+import '../realtime/socket_service.dart';
 import 'household_state.dart';
 import 'providers.dart';
 
@@ -21,9 +24,23 @@ class DryingData {
 class DryingNotifier extends StateNotifier<AsyncValue<DryingData>> {
   final Ref ref;
   final String householdId;
+  late final StreamSubscription<SocketEvent> _socketSub;
 
   DryingNotifier(this.ref, this.householdId) : super(const AsyncValue.loading()) {
     refresh();
+    // A drying_request:updated on any transition (created/accepted/rejected/
+    // cancelled/completed) can change all four lists here, including the
+    // favor balances (derived from COMPLETED requests) — simplest correct
+    // reaction is to refetch the whole slice, same as pull-to-refresh does.
+    _socketSub = ref.read(socketServiceProvider).events
+        .where((e) => e.name == 'drying_request:updated' || e.name == 'resync')
+        .listen((_) => refresh());
+  }
+
+  @override
+  void dispose() {
+    _socketSub.cancel();
+    super.dispose();
   }
 
   Future<void> refresh() async {

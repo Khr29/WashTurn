@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_exception.dart';
 import '../models/household.dart';
 import '../models/schedule.dart';
+import '../realtime/socket_service.dart';
 import 'providers.dart';
 
 /// Tracks the id of the household the signed-in user belongs to. WashTurn v1
@@ -94,18 +95,21 @@ final householdIdProvider =
     StateNotifierProvider<HouseholdIdNotifier, AsyncValue<String?>>((ref) => HouseholdIdNotifier(ref));
 
 final householdProvider = FutureProvider.autoDispose<Household?>((ref) async {
+  ref.watch(householdRevisionProvider); // re-run on household:updated/resync
   final id = ref.watch(householdIdProvider).value;
   if (id == null) return null;
   return ref.watch(householdRepositoryProvider).get(id);
 });
 
 final scheduleProvider = FutureProvider.autoDispose<WeekSchedule?>((ref) async {
+  ref.watch(householdRevisionProvider); // re-run on household:updated/resync
   final id = ref.watch(householdIdProvider).value;
   if (id == null) return null;
   return ref.watch(householdRepositoryProvider).getSchedule(id);
 });
 
 final membersProvider = FutureProvider.autoDispose<List<HouseholdMemberProfile>>((ref) async {
+  ref.watch(householdRevisionProvider); // re-run on household:updated/resync
   final id = ref.watch(householdIdProvider).value;
   if (id == null) return [];
   return ref.watch(householdRepositoryProvider).getMembers(id);

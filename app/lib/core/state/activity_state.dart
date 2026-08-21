@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/activity_entry.dart';
+import '../realtime/socket_service.dart';
 import 'household_state.dart';
 import 'providers.dart';
 
@@ -22,9 +25,19 @@ class ActivityNotifier extends StateNotifier<AsyncValue<ActivityListState>> {
   final Ref ref;
   final String householdId;
   int _page = 1;
+  late final StreamSubscription<SocketEvent> _socketSub;
 
   ActivityNotifier(this.ref, this.householdId) : super(const AsyncValue.loading()) {
     refresh();
+    _socketSub = ref.read(socketServiceProvider).events
+        .where((e) => e.name == 'activity:created' || e.name == 'resync')
+        .listen((_) => refresh());
+  }
+
+  @override
+  void dispose() {
+    _socketSub.cancel();
+    super.dispose();
   }
 
   Future<void> refresh() async {

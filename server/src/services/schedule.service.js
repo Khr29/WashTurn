@@ -1,5 +1,6 @@
 const Schedule = require('../models/Schedule');
 const { ApiError } = require('../utils/ApiError');
+const realtimeService = require('./realtime.service');
 
 async function getSchedule(householdId) {
   const schedule = await Schedule.findOne({ householdId });
@@ -31,6 +32,7 @@ async function replaceSchedule(household, days) {
     { days },
     { new: true, upsert: true }
   );
+  await realtimeService.emitHouseholdUpdated(household._id);
   return schedule;
 }
 

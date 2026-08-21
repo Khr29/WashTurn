@@ -9,6 +9,7 @@ const { ApiError } = require('../utils/ApiError');
 const { getHouseholdDateParts } = require('../utils/dateHelpers');
 const { getScheduledUserId } = require('./schedule.service');
 const notificationService = require('./notification.service');
+const realtimeService = require('./realtime.service');
 
 async function logActivity(turn, userId, type, summary) {
   await ActivityLog.create({
@@ -18,6 +19,7 @@ async function logActivity(turn, userId, type, summary) {
     type,
     summary,
   });
+  await realtimeService.emitActivityCreated(turn.householdId);
 }
 
 // Finds today's still-open turn if one exists, or lazily materializes a fresh
@@ -146,6 +148,7 @@ async function startTurn(turnId, userId, { estimatedDurationMinutes } = {}) {
 
   await logActivity(updated, userId, 'STARTED', `${updated.type === 'EMERGENCY' ? 'Emergency' : 'Scheduled'} wash started.`);
   await notificationService.notifyTurnStarted(updated);
+  await realtimeService.emitTurnUpdated(updated);
 
   return updated;
 }
@@ -168,6 +171,7 @@ async function releaseTurn(turnId, userId) {
 
   await logActivity(updated, userId, 'RELEASED', 'Scheduled turn released for emergency use.');
   await notificationService.notifyTurnReleased(updated);
+  await realtimeService.emitTurnUpdated(updated);
 
   return updated;
 }
@@ -199,6 +203,7 @@ async function claimTurn(turnId, userId) {
 
   await logActivity(updated, userId, 'CLAIMED', 'Emergency turn claimed.');
   await notificationService.notifyEmergencyClaimed(updated);
+  await realtimeService.emitTurnUpdated(updated);
 
   return updated;
 }
@@ -221,6 +226,7 @@ async function finishTurn(turnId, userId) {
 
   await logActivity(updated, userId, 'COMPLETED', 'Wash completed.');
   await notificationService.notifyTurnFinished(updated);
+  await realtimeService.emitTurnUpdated(updated);
 
   return updated;
 }
@@ -236,6 +242,7 @@ async function expireStaleTurn(turn) {
   );
   if (updated) {
     await logActivity(updated, updated.scheduledUserId, 'EXPIRED', 'Turn expired unused.');
+    await realtimeService.emitTurnUpdated(updated);
   }
   return updated;
 }
@@ -274,6 +281,7 @@ async function transferTurn(turnId, fromUserId, toUserId) {
   await cancelPendingRequestsFor(turnId);
   await logActivity(updated, fromUserId, 'TRANSFERRED', 'Turn given to another member.');
   await notificationService.notifyTurnTransferred(updated, fromUserId, toUserId);
+  await realtimeService.emitTurnUpdated(updated);
 
   return updated;
 }
@@ -320,6 +328,7 @@ async function createTurnRequest(turnId, requesterId) {
   }
 
   await notificationService.notifyTurnRequested(turn, requesterId);
+  await realtimeService.emitTurnRequestUpdated(turn.householdId, turn._id, request._id);
   return request;
 }
 
@@ -380,6 +389,8 @@ async function acceptTurnRequest(turnId, requestId, ownerId) {
   await cancelPendingRequestsFor(turnId, requestId);
   await logActivity(updatedTurn, ownerId, 'TRANSFERRED', 'Turn request accepted; ownership transferred.');
   await notificationService.notifyRequestAccepted(updatedTurn, acceptedRequest.requesterId.toString());
+  await realtimeService.emitTurnUpdated(updatedTurn);
+  await realtimeService.emitTurnRequestUpdated(updatedTurn.householdId, updatedTurn._id, acceptedRequest._id);
 
   return { turn: updatedTurn, request: acceptedRequest };
 }
@@ -400,6 +411,7 @@ async function rejectTurnRequest(turnId, requestId, ownerId) {
   }
 
   await notificationService.notifyRequestRejected(turn, request.requesterId.toString());
+  await realtimeService.emitTurnRequestUpdated(turn.householdId, turn._id, request._id);
   return request;
 }
 
@@ -412,6 +424,7 @@ async function cancelTurnRequest(turnId, requestId, requesterId) {
   if (!request) {
     throw new ApiError(409, 'This request is no longer pending, or is not yours to cancel.');
   }
+  await realtimeService.emitTurnRequestUpdated(request.householdId, request.turnId, request._id);
   return request;
 }
 

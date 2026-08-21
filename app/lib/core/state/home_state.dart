@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_exception.dart';
 import '../models/turn.dart';
 import '../models/turn_request.dart';
+import '../realtime/socket_service.dart';
 import 'household_state.dart';
 import 'providers.dart';
 
@@ -16,9 +19,24 @@ class HomeData {
 class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
   final Ref ref;
   final String householdId;
+  late final StreamSubscription<SocketEvent> _socketSub;
 
   HomeNotifier(this.ref, this.householdId) : super(const AsyncValue.loading()) {
     refresh();
+    // Machine status, turn lifecycle, and turn requests all live in HomeData,
+    // so any of these changing elsewhere (another member starting/finishing/
+    // transferring the turn, a request coming in or being resolved) means
+    // this slice — and only this slice — needs a fresh fetch. 'resync' covers
+    // whatever was missed while disconnected.
+    _socketSub = ref.read(socketServiceProvider).events
+        .where((e) => e.name == 'turn:updated' || e.name == 'turn_request:updated' || e.name == 'resync')
+        .listen((_) => refresh());
+  }
+
+  @override
+  void dispose() {
+    _socketSub.cancel();
+    super.dispose();
   }
 
   Future<void> refresh() async {

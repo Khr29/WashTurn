@@ -3,6 +3,7 @@ const Household = require('../models/Household');
 const Turn = require('../models/Turn');
 const { ApiError } = require('../utils/ApiError');
 const notificationService = require('./notification.service');
+const realtimeService = require('./realtime.service');
 
 async function findDryingRequestOrThrow(id) {
   const request = await DryingRequest.findById(id);
@@ -46,6 +47,7 @@ async function createDryingRequest(householdId, requesterId, helperId, turnId = 
   }
 
   await notificationService.notifyDryingRequested(request);
+  await realtimeService.emitDryingRequestUpdated(request);
   return request;
 }
 
@@ -92,6 +94,7 @@ async function acceptDryingRequest(requestId, helperId) {
   }
 
   await notificationService.notifyDryingAccepted(updated);
+  await realtimeService.emitDryingRequestUpdated(updated);
   return updated;
 }
 
@@ -111,6 +114,7 @@ async function rejectDryingRequest(requestId, helperId) {
   }
 
   await notificationService.notifyDryingRejected(updated);
+  await realtimeService.emitDryingRequestUpdated(updated);
   return updated;
 }
 
@@ -130,6 +134,7 @@ async function cancelDryingRequest(requestId, requesterId) {
   }
 
   await notificationService.notifyDryingCancelled(updated);
+  await realtimeService.emitDryingRequestUpdated(updated);
   return updated;
 }
 
@@ -157,6 +162,7 @@ async function completeDryingRequest(requestId, helperId) {
   }
 
   await notificationService.notifyDryingCompleted(updated);
+  await realtimeService.emitDryingRequestUpdated(updated);
   return updated;
 }
 
