@@ -10,37 +10,34 @@ const { getScheduledUserId } = require('../services/schedule.service');
 
 const REMINDER_HOUR = 8; // 8am household-local time
 
-// Runs once per hour. Because households can be in different timezones, each
-// household's own local hour is checked rather than relying on a single global
-// trigger time — this keeps "midnight" and "8am" meaningful per-household.
+// Runs once per hour. finalizeExpiredTurns is real-time-driven (a slot ends
+// whenever its own endAt says so, not at any particular local hour) so it
+// runs on every tick for every household — this is purely a backstop for a
+// household nobody happens to be actively reading right now; getCurrentTurn
+// already finalizes lazily on read (see turn.service.js), which is what
+// actually guarantees a slot ending is reflected immediately for anyone
+// looking. Reminders remain hour-gated since "today"/"tomorrow" is still a
+// per-household local-time concept independent of the turn model.
 async function runHourlyCheck() {
   const households = await Household.find();
 
   for (const household of households) {
+    // eslint-disable-next-line no-await-in-loop
+    await finalizeExpiredTurn(household._id);
+
     const hour = getHouseholdHour(household.timezone);
-    const { dateString, dayOfWeek } = getHouseholdDateParts(household.timezone);
-
-    if (hour === 0) {
-      // eslint-disable-next-line no-await-in-loop
-      await expireStaleTurns(household._id, dateString);
-    }
-
     if (hour === REMINDER_HOUR) {
+      const { dateString, dayOfWeek } = getHouseholdDateParts(household.timezone);
       // eslint-disable-next-line no-await-in-loop
       await sendReminders(household, dateString, dayOfWeek);
     }
   }
 }
 
-async function expireStaleTurns(householdId, todayDateString) {
-  const staleTurns = await Turn.find({
-    householdId,
-    date: { $lt: todayDateString },
-    status: { $in: ['PENDING', 'RELEASED'] },
-  });
-  for (const turn of staleTurns) {
-    // eslint-disable-next-line no-await-in-loop
-    await turnService.expireStaleTurn(turn);
+async function finalizeExpiredTurn(householdId) {
+  const openTurn = await Turn.findOne({ householdId, status: { $in: OPEN_TURN_STATUSES } });
+  if (openTurn) {
+    await turnService.finalizeIfExpired(openTurn);
   }
 }
 
@@ -48,14 +45,10 @@ async function sendReminders(household, todayDateString, dayOfWeek) {
   const schedule = await Schedule.findOne({ householdId: household._id });
   if (!schedule) return;
 
-  // With multiple turns per day now possible, "today's turn" means whichever
-  // one is still open — a household can have earlier completed turns on the
-  // same date, and .findOne would not otherwise guarantee picking the live one.
-  const todayTurn = await Turn.findOne({
-    householdId: household._id,
-    date: todayDateString,
-    status: { $in: OPEN_TURN_STATUSES },
-  }).sort({ createdAt: -1 });
+  // At most one open turn exists per household at all (see Turn's index) —
+  // no date filter needed, and none would be safe to add: an overnight slot
+  // still open today legitimately has yesterday's date in its `date` field.
+  const todayTurn = await Turn.findOne({ householdId: household._id, status: { $in: OPEN_TURN_STATUSES } });
   if (todayTurn && todayTurn.status === 'PENDING') {
     await notificationService.notifyTurnReminder(todayTurn, 'today');
   }

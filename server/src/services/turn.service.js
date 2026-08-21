@@ -6,8 +6,12 @@ const Household = require('../models/Household');
 const TurnRequest = require('../models/TurnRequest');
 const ActivityLog = require('../models/ActivityLog');
 const { ApiError } = require('../utils/ApiError');
-const { getHouseholdDateParts } = require('../utils/dateHelpers');
-const { getScheduledUserId } = require('./schedule.service');
+const {
+  getHouseholdDateParts,
+  zonedTimeToUtc,
+  addDaysToDateString,
+  dayOfWeekFromDateString,
+} = require('../utils/dateHelpers');
 const notificationService = require('./notification.service');
 const realtimeService = require('./realtime.service');
 
@@ -22,80 +26,147 @@ async function logActivity(turn, userId, type, summary) {
   await realtimeService.emitActivityCreated(turn.householdId);
 }
 
-// Finds today's still-open turn if one exists, or lazily materializes a fresh
-// one seeded from the weekly schedule's default owner for today. A household
-// can go through any number of turns in a day (one person washing twice,
-// turns changing hands, etc.) — this only ever creates a new one once the
-// previous one has reached a terminal status (COMPLETED/EXPIRED), because the
-// partial unique index on Turn only allows one *open* turn per household per
-// date. That index is also what keeps this race-safe: if two callers race to
-// create today's first turn, only one insert wins and the loser re-fetches
-// the winner instead of erroring — the same convergence the old upsert gave,
-// just scoped to "open" turns instead of the whole date.
-async function getOrCreateTodayTurn(household) {
+// A day's schedule entry names an owner but only optionally a startTime/
+// endTime — when either is missing the slot is the whole household-local
+// day (00:00 up to, but not including, the next day's 00:00). "24:00" is
+// used internally as the whole-day end sentinel since Date can't represent
+// a same-day 24:00 directly; it always rolls the end onto the next date.
+function slotWindowForDate(entry, dateString, timezone) {
+  const hasWindow = Boolean(entry.startTime && entry.endTime);
+  const startTime = hasWindow ? entry.startTime : '00:00';
+  const endTime = hasWindow ? entry.endTime : '24:00';
+
+  // endTime <= startTime (lexicographic works for zero-padded "HH:mm") means
+  // the slot crosses midnight, e.g. 22:00 -> 02:00 — its end lands on the
+  // next calendar date. This is also what "24:00" always hits, giving the
+  // whole-day case its next-midnight boundary for free.
+  const crossesMidnight = endTime <= startTime;
+  const endDateString = crossesMidnight ? addDaysToDateString(dateString, 1) : dateString;
+  const normalizedEndTime = endTime === '24:00' ? '00:00' : endTime;
+
+  return {
+    startAt: zonedTimeToUtc(dateString, startTime, timezone),
+    endAt: zonedTimeToUtc(endDateString, normalizedEndTime, timezone),
+  };
+}
+
+// Finds whichever schedule slot is actually happening right now, or — if
+// none is — the next one coming up. Must look further back than "today"
+// alone: a slot that started yesterday (or earlier, if the household's been
+// dormant) can still be the one that's current, since slots can cross
+// midnight and span multiple calendar days. Starts one day back to catch
+// exactly that overnight-carryover case, then steps forward one calendar day
+// at a time until it reaches a slot whose endAt hasn't passed yet — that's
+// either the in-progress one (now already past its startAt) or the next
+// upcoming one (now still before its startAt). Bounded at 9 days, which is
+// far more slack than any real gap between reads should ever need.
+function resolveSlotAt(schedule, timezone, now) {
+  let dateString = addDaysToDateString(getHouseholdDateParts(timezone, now).dateString, -1);
+
+  for (let i = 0; i < 9; i += 1) {
+    const dayOfWeek = dayOfWeekFromDateString(dateString);
+    const entry = schedule.days.find((d) => d.dayOfWeek === dayOfWeek);
+    if (entry) {
+      const window = slotWindowForDate(entry, dateString, timezone);
+      if (now < window.endAt) {
+        return { userId: entry.userId, dateString, ...window };
+      }
+    }
+    dateString = addDaysToDateString(dateString, 1);
+  }
+  throw new ApiError(500, 'Could not resolve a schedule slot for today.');
+}
+
+// Finds the household's still-open turn if one exists, or lazily
+// materializes a fresh one for whichever schedule slot applies right now. A
+// slot can contain any number of washes (see finishTurn) — this only ever
+// creates a new turn once the previous one's slot has actually ended
+// (finalizeIfExpired), because the partial unique index on Turn only allows
+// one *open* turn per household, full stop. That index is also what keeps
+// this race-safe: if two callers race to create the same slot's turn, only
+// one insert wins and the loser re-fetches the winner instead of erroring.
+async function getOrCreateCurrentSlotTurn(household, now = new Date()) {
   const machine = await Machine.findOne({ householdId: household._id });
   if (!machine) {
     throw new ApiError(500, 'Household is missing its machine record.');
   }
 
-  const { dateString, dayOfWeek } = getHouseholdDateParts(household.timezone);
-
-  const openTurn = await Turn.findOne({
-    householdId: household._id,
-    date: dateString,
-    status: { $in: OPEN_TURN_STATUSES },
-  });
+  const openTurn = await Turn.findOne({ householdId: household._id, status: { $in: OPEN_TURN_STATUSES } });
   if (openTurn) return openTurn;
 
   const schedule = await Schedule.findOne({ householdId: household._id });
   if (!schedule) {
     throw new ApiError(500, 'Household is missing its schedule.');
   }
-  const scheduledUserId = getScheduledUserId(schedule, dayOfWeek);
-  if (!scheduledUserId) {
-    throw new ApiError(500, 'No schedule entry found for today.');
-  }
+  const slot = resolveSlotAt(schedule, household.timezone, now);
 
   try {
     return await Turn.create({
       householdId: household._id,
       machineId: machine._id,
-      date: dateString,
-      scheduledUserId,
+      date: slot.dateString,
+      startAt: slot.startAt,
+      endAt: slot.endAt,
+      scheduledUserId: slot.userId,
       status: 'PENDING',
     });
   } catch (err) {
     if (err.code === 11000) {
-      // Lost the race to create today's open turn — someone else's insert
-      // won an instant earlier; return that one instead of erroring.
-      const winner = await Turn.findOne({
-        householdId: household._id,
-        date: dateString,
-        status: { $in: OPEN_TURN_STATUSES },
-      });
+      // Lost the race to create this slot's open turn — someone else's
+      // insert won an instant earlier; return that one instead of erroring.
+      const winner = await Turn.findOne({ householdId: household._id, status: { $in: OPEN_TURN_STATUSES } });
       if (winner) return winner;
     }
     throw err;
   }
 }
 
-// The turn that reflects what's actually happening right now. Almost always
-// this is today's open turn, but if a wash was started before midnight and
-// is still IN_USE/CLAIMED when the household's calendar day rolls over, that
-// unfinished turn is what's real — showing a fresh PENDING turn for the new
-// date instead would make the machine look AVAILABLE while it's still
-// physically running. expireStaleTurn deliberately never touches IN_USE/
-// CLAIMED turns (a wash is never auto-terminated), so without this check
-// such a turn would become permanently invisible once the date rolls over.
-async function getCurrentTurn(household) {
-  const activeCarryover = await Turn.findOne({
-    householdId: household._id,
-    status: { $in: ['CLAIMED', 'IN_USE'] },
-  }).sort({ date: -1, createdAt: -1 });
+// A turn whose slot has ended (now >= endAt) is finalized regardless of what
+// it was doing at that instant — mid-wash, idle, still just RELEASED,
+// whatever — because the owner's window is authoritative: the next turn
+// cannot become active until the current slot's end time, and symmetrically
+// the current slot cannot stay "current" one instant past it. COMPLETED if
+// it was ever used (startedAt set, even if the most recent wash had already
+// been finished for a while), EXPIRED if it never was. Guarded on still
+// being OPEN so two concurrent finalizers (a live request racing the hourly
+// sweep) can't double-log/double-emit — only one findOneAndUpdate wins.
+async function finalizeIfExpired(turn, now = new Date()) {
+  if (now < turn.endAt) return turn;
 
-  if (activeCarryover) return activeCarryover;
+  const nextStatus = turn.startedAt ? 'COMPLETED' : 'EXPIRED';
+  const updated = await Turn.findOneAndUpdate(
+    { _id: turn._id, status: { $in: OPEN_TURN_STATUSES } },
+    { $set: { status: nextStatus } },
+    { new: true }
+  );
+  if (!updated) {
+    // Someone else finalized it first — return the current (terminal) doc.
+    return Turn.findById(turn._id);
+  }
 
-  return getOrCreateTodayTurn(household);
+  await logActivity(
+    updated,
+    updated.scheduledUserId,
+    nextStatus,
+    nextStatus === 'COMPLETED' ? "Turn's time slot ended." : 'Turn expired unused.'
+  );
+  await realtimeService.emitTurnUpdated(updated);
+  return updated;
+}
+
+// The turn that reflects what's actually happening right now, determined
+// purely from real time against startAt/endAt — never from calendar dates.
+// If the household's current open turn's slot has ended, it's finalized here
+// (lazily, on read) and the next applicable slot's turn is materialized in
+// its place; the hourly cron (dailyScheduler.js) does the same thing as a
+// backstop for households nobody happens to be actively reading right now.
+async function getCurrentTurn(household, now = new Date()) {
+  const openTurn = await Turn.findOne({ householdId: household._id, status: { $in: OPEN_TURN_STATUSES } });
+  if (openTurn) {
+    const settled = await finalizeIfExpired(openTurn, now);
+    if (OPEN_TURN_STATUSES.includes(settled.status)) return settled;
+  }
+  return getOrCreateCurrentSlotTurn(household, now);
 }
 
 async function findTurnOrThrow(turnId) {
@@ -109,14 +180,20 @@ async function findTurnOrThrow(turnId) {
 async function startTurn(turnId, userId, { estimatedDurationMinutes } = {}) {
   const existing = await findTurnOrThrow(turnId);
 
-  // Branch 1: the scheduled user starting their normal turn.
+  // Branch 1: the scheduled user starting a wash — either their first one in
+  // this slot, or another one after an earlier wash in the same slot already
+  // finished (finishTurn returns to PENDING rather than ending the turn, so
+  // this branch also covers every repeat wash). `existing.type` is preserved
+  // rather than hardcoded so a repeat wash by an emergency claimer (who
+  // becomes `scheduledUserId` on claim — see claimTurn) stays marked
+  // EMERGENCY instead of flipping back to NORMAL on their second wash.
   let updated = await Turn.findOneAndUpdate(
     { _id: turnId, status: 'PENDING', scheduledUserId: userId },
     {
       $set: {
         status: 'IN_USE',
         actingUserId: userId,
-        type: 'NORMAL',
+        type: existing.type || 'NORMAL',
         startedAt: new Date(),
         estimatedDurationMinutes: estimatedDurationMinutes ?? null,
       },
@@ -188,9 +265,17 @@ async function claimTurn(turnId, userId) {
   // can't turn around and reclaim their own released turn. This is folded
   // into the atomic condition itself (scheduledUserId: $ne) so it can't be
   // raced, not just checked ahead of time.
+  //
+  // scheduledUserId is reassigned to the claimant here, not left as the
+  // original owner — a slot now survives multiple washes (see finishTurn),
+  // so ownership of the *rest* of the slot has to land somewhere concrete
+  // for a repeat wash to have anyone to match against; the claimant taking
+  // over the remainder (same as a direct transfer would) is that answer.
+  // startAt/endAt are untouched — claiming reassigns who the slot belongs
+  // to, never the slot's own boundaries.
   const updated = await Turn.findOneAndUpdate(
     { _id: turnId, status: 'RELEASED', scheduledUserId: { $ne: userId } },
-    { $set: { status: 'CLAIMED', actingUserId: userId, type: 'EMERGENCY' } },
+    { $set: { status: 'CLAIMED', actingUserId: userId, scheduledUserId: userId, type: 'EMERGENCY' } },
     { new: true }
   );
 
@@ -208,12 +293,21 @@ async function claimTurn(turnId, userId) {
   return updated;
 }
 
+// Finishing a wash does NOT end the turn — the owner keeps the machine for
+// the rest of their slot and can start washing again (see startTurn's Branch
+// 1), so this returns to PENDING rather than a terminal status. The only
+// exception is finishing exactly at-or-after the slot's own end time, where
+// there's no "rest of the slot" left to return to — that goes straight to
+// COMPLETED rather than briefly becoming a PENDING turn that the very next
+// read would just finalize anyway.
 async function finishTurn(turnId, userId) {
   const existing = await findTurnOrThrow(turnId);
+  const now = new Date();
+  const nextStatus = now >= existing.endAt ? 'COMPLETED' : 'PENDING';
 
   const updated = await Turn.findOneAndUpdate(
     { _id: turnId, status: 'IN_USE', actingUserId: userId },
-    { $set: { status: 'COMPLETED', finishedAt: new Date() } },
+    { $set: { status: nextStatus, actingUserId: null, finishedAt: now } },
     { new: true }
   );
 
@@ -228,22 +322,6 @@ async function finishTurn(turnId, userId) {
   await notificationService.notifyTurnFinished(updated);
   await realtimeService.emitTurnUpdated(updated);
 
-  return updated;
-}
-
-// Called by the daily cron: any turn still RELEASED (never claimed) or PENDING
-// (never acted on) from a previous day is closed out so the new day's turn can
-// be materialized cleanly.
-async function expireStaleTurn(turn) {
-  const updated = await Turn.findOneAndUpdate(
-    { _id: turn._id, status: { $in: ['PENDING', 'RELEASED'] } },
-    { $set: { status: 'EXPIRED' } },
-    { new: true }
-  );
-  if (updated) {
-    await logActivity(updated, updated.scheduledUserId, 'EXPIRED', 'Turn expired unused.');
-    await realtimeService.emitTurnUpdated(updated);
-  }
   return updated;
 }
 
@@ -429,14 +507,14 @@ async function cancelTurnRequest(turnId, requestId, requesterId) {
 }
 
 module.exports = {
-  getOrCreateTodayTurn,
+  getOrCreateCurrentSlotTurn,
   getCurrentTurn,
+  finalizeIfExpired,
   findTurnOrThrow,
   startTurn,
   releaseTurn,
   claimTurn,
   finishTurn,
-  expireStaleTurn,
   transferTurn,
   createTurnRequest,
   listTurnRequests,
