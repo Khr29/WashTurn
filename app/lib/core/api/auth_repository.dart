@@ -31,4 +31,13 @@ class AuthRepository {
     final json = await client.get('/auth/me');
     return AppUser.fromJson(json['user']);
   }
+
+  /// Validates the current token the same way [me] does, but also reissues a
+  /// fresh one — this is what session restore calls so an active user's
+  /// token keeps sliding forward and effectively never expires, without
+  /// the backend having to hand out a long-lived token up front.
+  Future<AuthResult> refresh() async {
+    final json = await client.post('/auth/refresh');
+    return AuthResult(user: AppUser.fromJson(json['user']), token: json['token'] as String);
+  }
 }

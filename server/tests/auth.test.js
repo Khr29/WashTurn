@@ -99,3 +99,53 @@ describe('authentication', () => {
     await request(app).get('/api/auth/me').set('Authorization', 'Bearer not-a-real-jwt').expect(401);
   });
 });
+
+describe('token refresh (persistent-login renewal)', () => {
+  test('POST /auth/refresh reissues a working token for the same user', async () => {
+    const reg = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Farah', email: 'farah@test.com', password: 'password123' })
+      .expect(201);
+
+    const refreshRes = await request(app)
+      .post('/api/auth/refresh')
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .expect(200);
+
+    expect(refreshRes.body.token).toEqual(expect.any(String));
+    expect(refreshRes.body.user.email).toBe('farah@test.com');
+    expect(refreshRes.body.user.id).toBe(reg.body.user.id);
+
+    // The reissued token must itself be a fully working credential, not just
+    // a string that happens to be returned — this is what session restore
+    // on the client actually depends on.
+    const meRes = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${refreshRes.body.token}`)
+      .expect(200);
+    expect(meRes.body.user.email).toBe('farah@test.com');
+  });
+
+  test('POST /auth/refresh rejects missing, malformed, and invalid tokens exactly like other protected routes', async () => {
+    await request(app).post('/api/auth/refresh').expect(401);
+    await request(app).post('/api/auth/refresh').set('Authorization', 'not-bearer-token').expect(401);
+    await request(app).post('/api/auth/refresh').set('Authorization', 'Bearer not-a-real-jwt').expect(401);
+  });
+
+  test('the original token keeps working after a refresh (JWTs are stateless — no revocation of the old one)', async () => {
+    const reg = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Gabe', email: 'gabe@test.com', password: 'password123' })
+      .expect(201);
+
+    await request(app)
+      .post('/api/auth/refresh')
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .expect(200);
+
+    await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .expect(200);
+  });
+});

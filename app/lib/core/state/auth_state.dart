@@ -40,9 +40,17 @@ class AuthNotifier extends StateNotifier<AuthState> {
       return;
     }
     try {
-      final user = await ref.read(authRepositoryProvider).me();
-      state = AuthAuthenticated(user);
-      ref.read(socketServiceProvider).connect(token);
+      // refresh() rather than me() — validates the stored token exactly the
+      // same way, but also reissues a fresh one and persists it below. Every
+      // app start an active user makes slides their token's expiry forward,
+      // so they never actually hit it; a token that really has expired (the
+      // account hasn't opened the app in the configured lifetime) still gets
+      // rejected here exactly like me() would, falling into the same
+      // discard-and-require-login path as before.
+      final result = await ref.read(authRepositoryProvider).refresh();
+      await ref.read(tokenStoreProvider).write(result.token);
+      state = AuthAuthenticated(result.user);
+      ref.read(socketServiceProvider).connect(result.token);
     } on ApiException {
       // Token is invalid/expired server-side — discard it and require login
       // again. The cached household id goes with it: it's meaningless

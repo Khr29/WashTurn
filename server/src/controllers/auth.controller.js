@@ -45,4 +45,9 @@ const me = asyncHandler(async (req, res) => {
   res.json({ user: authService.toPublicUser(user) });
 });
 
-module.exports = { register, login, logout, me };
+const refresh = asyncHandler(async (req, res) => {
+  const result = await authService.refresh(req.user.id);
+  res.json(result);
+});
+
+module.exports = { register, login, logout, me, refresh };

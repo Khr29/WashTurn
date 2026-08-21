@@ -35,7 +35,12 @@ class _RootGate extends ConsumerStatefulWidget {
 }
 
 class _RootGateState extends ConsumerState<_RootGate> {
-  bool _fcmInitialized = false;
+  // Tracks *which* user FCM was last initialized for, not just whether it
+  // ever ran — a bare bool would leave a second, different account's push
+  // registration never sent if they log in later in the same app session
+  // (e.g. after the first account logs out), since AuthNotifier.logout only
+  // unregisters the outgoing account's token and never re-triggers this.
+  String? _fcmInitializedForUserId;
 
   @override
   Widget build(BuildContext context) {
@@ -59,13 +64,13 @@ class _RootGateState extends ConsumerState<_RootGate> {
     return switch (authState) {
       AuthLoading() => const _Splash(),
       AuthUnauthenticated() => const LoginScreen(),
-      AuthAuthenticated() => _AuthenticatedGate(onReady: _initFcmOnce),
+      AuthAuthenticated() => _AuthenticatedGate(onReady: () => _initFcmForUser(authState.user.id)),
     };
   }
 
-  void _initFcmOnce() {
-    if (_fcmInitialized) return;
-    _fcmInitialized = true;
+  void _initFcmForUser(String userId) {
+    if (_fcmInitializedForUserId == userId) return;
+    _fcmInitializedForUserId = userId;
     // Push notifications require Firebase to be configured for this project
     // (see app/README) — failures here shouldn't block the rest of the app.
     ref.read(fcmServiceProvider).init().catchError((_) {});

@@ -93,6 +93,33 @@ A few things worth knowing:
 - Push notifications need a real Firebase project — run `flutterfire configure` to generate `lib/firebase_options.dart`. Skip that step and the app runs completely normally; you just won't get pushes.
 - `flutter analyze` and `flutter test` are both clean if you want to sanity-check your setup before diving in.
 
+## Deploying to production
+
+WashTurn needs a publicly reachable, HTTPS, 24/7 backend to work from anywhere (not just your home network) — here's the free-tier path:
+
+### 1. MongoDB Atlas (free M0 cluster)
+
+1. Create an account at [mongodb.com/cloud/atlas](https://www.mongodb.com/cloud/atlas) and a free **M0** cluster.
+2. Under **Database Access**, create a database user (username + password).
+3. Under **Network Access**, add `0.0.0.0/0` (allow from anywhere) — Render's outbound IPs aren't static on the free tier, so this is the practical option; access is still gated by the database username/password.
+4. Get the connection string from **Connect → Drivers** — it looks like `mongodb+srv://<user>:<password>@<cluster>.mongodb.net/washturn?retryWrites=true&w=majority`. This is your production `MONGO_URI`.
+
+### 2. Render.com (free web service)
+
+1. Create an account at [render.com](https://render.com) and connect this GitHub repo.
+2. Render should pick up `render.yaml` at the repo root automatically (a "Blueprint"). It points at the `server/` directory, runs `npm install` then `npm start`, and checks `/health`.
+3. When prompted for the env vars marked `sync: false`, set:
+   - `MONGO_URI` — the Atlas connection string from step 1.
+   - `JWT_SECRET` — a long random string, e.g. `openssl rand -base64 48`. **Different from your local `.env`'s value.**
+   - `CORS_ORIGIN` — leave blank unless a browser-based client will call this API (irrelevant to the Flutter app).
+   - `FIREBASE_SERVICE_ACCOUNT_PATH` — optional, only for push notifications. Upload the service account JSON under the service's **Secret Files** tab, then set this to whatever path Render mounts it at (Render shows this in the same tab).
+4. Deploy. Render gives you a URL like `https://washturn-api.onrender.com`, with HTTPS already handled — no separate domain or certificate needed. `/api/...` and the Socket.IO endpoint both work over that same URL; `wss://` is automatic once the client connects to an `https://` origin.
+5. **Free-tier caveat:** the service sleeps after ~15 minutes idle and takes a few seconds to wake on the next request — fine for a household app, just not instant on the very first request after a lull.
+
+### 3. Point the Flutter app at it
+
+Once deployed, set `ApiConfig._productionBaseUrl` in `app/lib/core/api/api_config.dart` to `https://<your-service>.onrender.com/api`. Release builds (`flutter build apk --release` / `--release` iOS builds) use this automatically — no flags needed. Debug builds (`flutter run`) keep using your local backend, exactly as before.
+
 ---
 
 That's WashTurn: not glamorous, not trying to be — just a straightforward answer to a fight that shouldn't have to happen every single week.

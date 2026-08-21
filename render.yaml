@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: washturn-api
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Secrets below are intentionally `sync: false` — Render will prompt
+      # for these in the dashboard instead of reading them from this file,
+      # so nothing sensitive ever lives in the repo.
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: MONGO_URI
+        sync: false
+      # Comma-separated browser origins allowed to call the API cross-origin.
+      # Irrelevant to the Flutter app itself (it never sends an Origin
+      # header) — only needed if a browser-based client will ever call this
+      # API. Leave unset in the Render dashboard otherwise.
+      - key: CORS_ORIGIN
+        sync: false
+      - key: DEFAULT_HOUSEHOLD_TIMEZONE
+        value: UTC
+      # Optional — only needed for push notifications. Upload the Firebase
+      # service account JSON as a Render "Secret File" and point this at
+      # wherever Render mounts it (see README's "Deploying to production").
+      - key: FIREBASE_SERVICE_ACCOUNT_PATH
+        sync: false
+    # PORT is injected automatically by Render — config/env.js already reads
+    # process.env.PORT, so no envVar entry is needed for it here.
